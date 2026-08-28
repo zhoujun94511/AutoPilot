@@ -89,14 +89,14 @@ Full dependency matrix: [setup overview](docs/SETUP.md).
 
 ## Automation coverage
 
-| Layer | Stack | Notes |
-| :--- | :--- | :--- |
-| Web | Selenium 4 · optional Playwright | Browser UI automation |
-| HTTP | Built-in REST client | Auth, assertions, JsonPath/XPath extraction |
-| Android | UiAutomator2 · adb | USB / wireless debug devices |
-| iOS | Direct WDA | Windows/Linux can drive WDA-ready devices |
-| Data / middleware | `.[data]` optional | Redis, SSH, SQLAlchemy, Kafka, etc. |
-| Import | OpenAPI · Postman | Deterministic `.tc.yaml` generation |
+| Layer             | Stack                            | Notes                                       |
+|:------------------|:---------------------------------|:--------------------------------------------|
+| Web               | Selenium 4 · optional Playwright | Browser UI automation                       |
+| HTTP              | Built-in REST client             | Auth, assertions, JsonPath/XPath extraction |
+| Android           | UiAutomator2 · adb               | USB / wireless debug devices                |
+| iOS               | Direct WDA                       | Windows/Linux can drive WDA-ready devices   |
+| Data / middleware | `.[data]` optional               | Redis, SSH, SQLAlchemy, Kafka, etc.         |
+| Import            | OpenAPI · Postman                | Deterministic `.tc.yaml` generation         |
 
 ---
 
@@ -131,13 +131,13 @@ Integration checklist: [IDE integration](../Autopilot-Platform/docs/architecture
 
 ## Optional extras
 
-| Extra | Install | Purpose |
-| :--- | :--- | :--- |
-| Data / middleware | `.[data]` | Redis, SSH, SQLAlchemy, etc. |
-| Live mirror | `.[mirror]` | scrcpy / AVFoundation |
-| Icons | `.[icons]` | Vector icons |
-| Playwright | `.[web_playwright]` | Optional browser engine |
-| Development | `.[dev]` | Tests and static checks |
+| Extra             | Install             | Purpose                      |
+|:------------------|:--------------------|:-----------------------------|
+| Data / middleware | `.[data]`           | Redis, SSH, SQLAlchemy, etc. |
+| Live mirror       | `.[mirror]`         | scrcpy / AVFoundation        |
+| Icons             | `.[icons]`          | Vector icons                 |
+| Playwright        | `.[web_playwright]` | Optional browser engine      |
+| Development       | `.[dev]`            | Tests and static checks      |
 
 Bundled `resources/` ship adb, go-ios, scrcpy, and related tools per OS; run `tools/preflight.py` before first launch.
 
@@ -171,43 +171,43 @@ tools/          Preflight, batch runs, contract checks
 
 ### Responsibility split with Platform
 
-| Capability | AutoPilot IDE | AutoPilot Platform |
-|------------|---------------|--------------------|
-| Keyword authoring | Primary | Browse / govern |
-| Bindings and locators | Primary | Stored with artifact |
-| Local debugging | Primary | Not in scope |
-| Intent design and review | Import, bind, land | Primary |
-| Remote batch runs | Submit and observe | Schedule and govern |
-| Device intake | IDE Runner | Pool + standalone Runner |
-| AI keys | Consume | Host and control |
+| Capability               | AutoPilot IDE      | AutoPilot Platform       |
+|--------------------------|--------------------|--------------------------|
+| Keyword authoring        | Primary            | Browse / govern          |
+| Bindings and locators    | Primary            | Stored with artifact     |
+| Local debugging          | Primary            | Not in scope             |
+| Intent design and review | Import, bind, land | Primary                  |
+| Remote batch runs        | Submit and observe | Schedule and govern      |
+| Device intake            | IDE Runner         | Pool + standalone Runner |
+| AI keys                  | Consume            | Host and control         |
 
 ### Version compatibility
 
 Pair IDE and Platform releases per their release notes; project format is `.tc.yaml` / `.map.yaml` (legacy `.tc` / `.map` supported). Integrator details: [`RUNTIME_PIN`](../Autopilot-Platform/contracts/RUNTIME_PIN) and [IDE integration](../Autopilot-Platform/docs/architecture/IDE_INTEGRATION.md).
 
-| IDE version | Platform version | Project format | Status |
-|-------------|------------------|----------------|--------|
-| 0.1.x | 0.2.x | `.tc.yaml` / `.map.yaml` | Current dev line |
+| IDE version | Platform version | Project format           | Status           |
+|-------------|------------------|--------------------------|------------------|
+| 0.1.x       | 0.2.x            | `.tc.yaml` / `.map.yaml` | Current dev line |
 
 ### Support matrix
 
-| Item | Minimum | Recommended |
-|------|---------|-------------|
-| Python | 3.10 | 3.12 |
-| Node.js | 18 | 20 or 22 |
-| JDK (Android) | 17+ | 17+ |
-| Chrome / Edge | Stable | Stable |
+| Item          | Minimum | Recommended |
+|---------------|---------|-------------|
+| Python        | 3.10    | 3.12        |
+| Node.js       | 18      | 20 or 22    |
+| JDK (Android) | 17+     | 17+         |
+| Chrome / Edge | Stable  | Stable      |
 
 iOS: macOS + Xcode for signing and first deploy; Windows/Linux need WDA-ready devices. See [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md).
 
 ### Terminology
 
-| Term | Definition |
-|------|------------|
+| Term                    | Definition                                  |
+|-------------------------|---------------------------------------------|
 | Execution node (Runner) | Any node that claims jobs and executes them |
-| Standalone Runner | CLI process from the Platform repo |
-| IDE Runner | Local execution node started by this IDE |
-| Device pool | Device inventory managed by Platform |
+| Standalone Runner       | CLI process from the Platform repo          |
+| IDE Runner              | Local execution node started by this IDE    |
+| Device pool             | Device inventory managed by Platform        |
 
 </details>
 
@@ -215,14 +215,14 @@ iOS: macOS + Xcode for signing and first deploy; Windows/Linux need WDA-ready de
 
 ## Documentation
 
-| Doc | Description |
-|-----|-------------|
-| [Setup overview](docs/SETUP.md) | Dependency matrix and preflight |
-| [Web](docs/setup/web.md) · [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md) | Platform toolchains |
-| [Inspector](docs/inspector.md) | Control tree and mirroring |
-| [Project model](docs/project-model.md) | Project file formats |
-| [Platform boundary](docs/managementconsole.md) | Client integration |
-| [Packaging](docs/packaging.md) | Distribution and `platform.url` |
+| Doc                                                                                    | Description                     |
+|----------------------------------------------------------------------------------------|---------------------------------|
+| [Setup overview](docs/SETUP.md)                                                        | Dependency matrix and preflight |
+| [Web](docs/setup/web.md) · [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md) | Platform toolchains             |
+| [Inspector](docs/inspector.md)                                                         | Control tree and mirroring      |
+| [Project model](docs/project-model.md)                                                 | Project file formats            |
+| [Platform boundary](docs/managementconsole.md)                                         | Client integration              |
+| [Packaging](docs/packaging.md)                                                         | Distribution and `platform.url` |
 
 Development checks:
 

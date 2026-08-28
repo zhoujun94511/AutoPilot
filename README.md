@@ -89,14 +89,14 @@ python tools/run_suite.py --project <工程目录> --parallel --platform android
 
 ## 自动化覆盖范围
 
-| 层级 | 技术栈 | 说明 |
-| :--- | :--- | :--- |
-| Web | Selenium 4 · 可选 Playwright | 浏览器 UI 自动化 |
-| HTTP | 内置 REST 客户端 | 鉴权、断言、JsonPath/XPath 提取 |
-| Android | UiAutomator2 · adb | USB / 无线调试真机 |
-| iOS | WDA 直连 | Windows/Linux 可连已备 WDA 的设备 |
-| 数据 / 中间件 | `.[data]` 可选 | Redis、SSH、SQLAlchemy、Kafka 等 |
-| 导入 | OpenAPI · Postman | 生成确定性 `.tc.yaml` 用例 |
+| 层级       | 技术栈                        | 说明                           |
+|:---------|:---------------------------|:-----------------------------|
+| Web      | Selenium 4 · 可选 Playwright | 浏览器 UI 自动化                   |
+| HTTP     | 内置 REST 客户端                | 鉴权、断言、JsonPath/XPath 提取      |
+| Android  | UiAutomator2 · adb         | USB / 无线调试真机                 |
+| iOS      | WDA 直连                     | Windows/Linux 可连已备 WDA 的设备   |
+| 数据 / 中间件 | `.[data]` 可选               | Redis、SSH、SQLAlchemy、Kafka 等 |
+| 导入       | OpenAPI · Postman          | 生成确定性 `.tc.yaml` 用例          |
 
 ---
 
@@ -131,13 +131,13 @@ python -m autopilot.runner --server http://127.0.0.1:8000 --token-env MC_RUNNER_
 
 ## 可选组件
 
-| Extra | 安装 | 用途 |
-| :--- | :--- | :--- |
-| 数据与中间件 | `.[data]` | Redis、SSH、SQLAlchemy 等 |
-| 实时镜像 | `.[mirror]` | scrcpy / AVFoundation |
-| 图标 | `.[icons]` | 矢量图标 |
-| Playwright | `.[web_playwright]` | 可选浏览器引擎 |
-| 开发 | `.[dev]` | 测试与静态检查 |
+| Extra      | 安装                  | 用途                     |
+|:-----------|:--------------------|:-----------------------|
+| 数据与中间件     | `.[data]`           | Redis、SSH、SQLAlchemy 等 |
+| 实时镜像       | `.[mirror]`         | scrcpy / AVFoundation  |
+| 图标         | `.[icons]`          | 矢量图标                   |
+| Playwright | `.[web_playwright]` | 可选浏览器引擎                |
+| 开发         | `.[dev]`            | 测试与静态检查                |
 
 内置 `resources/` 按操作系统分发 adb、go-ios、scrcpy 等工具链；首次运行请执行 `tools/preflight.py`。
 
@@ -171,43 +171,43 @@ tools/          预检、批量执行与契约校验
 
 ### 与 Platform 的职责边界
 
-| 能力 | AutoPilot IDE | AutoPilot Platform |
-|------|---------------|-------------------|
-| 关键字用例编排 | 主责 | 浏览 / 治理 |
-| Binding 与定位器 | 主责 | 随制品保存 |
-| 本机调试 | 主责 | 不承担 |
-| 意图设计与评审 | 导入、绑定、落地 | 主责 |
-| 远程批跑 | 提交与查看 | 调度、治理 |
-| 设备接入 | IDE Runner | 设备池 + 独立 Runner |
-| AI 密钥 | 使用 | 统一托管 |
+| 能力           | AutoPilot IDE | AutoPilot Platform |
+|--------------|---------------|--------------------|
+| 关键字用例编排      | 主责            | 浏览 / 治理            |
+| Binding 与定位器 | 主责            | 随制品保存              |
+| 本机调试         | 主责            | 不承担                |
+| 意图设计与评审      | 导入、绑定、落地      | 主责                 |
+| 远程批跑         | 提交与查看         | 调度、治理              |
+| 设备接入         | IDE Runner    | 设备池 + 独立 Runner    |
+| AI 密钥        | 使用            | 统一托管               |
 
 ### 版本兼容
 
 请按 IDE 与 Platform 发布说明配对使用；工程格式为 `.tc.yaml` / `.map.yaml`（兼容旧版 `.tc` / `.map`）。对接细节见 [`RUNTIME_PIN`](../Autopilot-Platform/contracts/RUNTIME_PIN) 与 [IDE 对接](../Autopilot-Platform/docs/architecture/IDE_INTEGRATION.md)。
 
-| IDE 版本 | Platform 版本 | 工程格式 | 状态 |
-|----------|---------------|----------|------|
-| 0.1.x | 0.2.x | `.tc.yaml` / `.map.yaml` | 当前开发线 |
+| IDE 版本 | Platform 版本 | 工程格式                     | 状态    |
+|--------|-------------|--------------------------|-------|
+| 0.1.x  | 0.2.x       | `.tc.yaml` / `.map.yaml` | 当前开发线 |
 
 ### 支持矩阵
 
-| 项目 | 最低 | 推荐 |
-|------|------|------|
-| Python | 3.10 | 3.12 |
-| Node.js | 18 | 20 或 22 |
-| JDK（Android） | 17+ | 17+ |
-| Chrome / Edge | Stable | Stable |
+| 项目            | 最低     | 推荐      |
+|---------------|--------|---------|
+| Python        | 3.10   | 3.12    |
+| Node.js       | 18     | 20 或 22 |
+| JDK（Android）  | 17+    | 17+     |
+| Chrome / Edge | Stable | Stable  |
 
 iOS：macOS + Xcode 用于签名与初次部署；Windows/Linux 需设备侧 WDA 已就绪。详见 [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md)。
 
 ### 术语
 
-| 术语 | 定义 |
-|------|------|
-| 执行节点 Runner | 领取任务并执行的节点统称 |
-| 独立 Runner | Platform 仓提供的 CLI 执行进程 |
-| IDE Runner | 由本 IDE 启动的本机执行节点 |
-| 设备池 | Platform 管理的设备资源集合 |
+| 术语          | 定义                     |
+|-------------|------------------------|
+| 执行节点 Runner | 领取任务并执行的节点统称           |
+| 独立 Runner   | Platform 仓提供的 CLI 执行进程 |
+| IDE Runner  | 由本 IDE 启动的本机执行节点       |
+| 设备池         | Platform 管理的设备资源集合     |
 
 </details>
 
@@ -215,14 +215,14 @@ iOS：macOS + Xcode 用于签名与初次部署；Windows/Linux 需设备侧 WDA
 
 ## 文档
 
-| 文档 | 说明 |
-|------|------|
-| [配置总览](docs/SETUP.md) | 依赖矩阵与环境预检 |
-| [Web](docs/setup/web.md) · [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md) | 各平台工具链 |
-| [检视器](docs/inspector.md) | 控件树与本机镜像 |
-| [工程模型](docs/project-model.md) | 工程文件格式 |
-| [与 Platform 的边界](docs/managementconsole.md) | 客户端集成说明 |
-| [打包](docs/packaging.md) | 发行与 `platform.url` |
+| 文档                                                                                     | 说明                 |
+|----------------------------------------------------------------------------------------|--------------------|
+| [配置总览](docs/SETUP.md)                                                                  | 依赖矩阵与环境预检          |
+| [Web](docs/setup/web.md) · [Android](docs/setup/android.md) · [iOS](docs/setup/ios.md) | 各平台工具链             |
+| [检视器](docs/inspector.md)                                                               | 控件树与本机镜像           |
+| [工程模型](docs/project-model.md)                                                          | 工程文件格式             |
+| [与 Platform 的边界](docs/managementconsole.md)                                            | 客户端集成说明            |
+| [打包](docs/packaging.md)                                                                | 发行与 `platform.url` |
 
 开发检查：
 
