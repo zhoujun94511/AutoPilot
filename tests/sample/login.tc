@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root ver="1.0" db_id="a1b2c3d4e5" mock_id="" need_update="false"
+      is_run="true" is_able_invoked="false" relate_manual_id=""
+      has_inner_case="false" has_monkey_step="false" tag="WEB">
+  <before>
+    <step id="log" comment="开始" isrun="true">
+      <param id="message">用例开始</param>
+    </step>
+  </before>
+  <case>
+    <step id="set_var" comment="设置用户名变量" isrun="true">
+      <param id="name">username</param>
+      <param id="value">admin</param>
+    </step>
+    <step id="log" comment="打印变量" isrun="true">
+      <param id="message">当前用户: ${username}</param>
+    </step>
+    <step id="verify_equals" comment="校验用户名" isrun="true">
+      <param id="actual">${username}</param>
+      <param id="expect">admin</param>
+    </step>
+    <step id="exec_control_if_end" comment="if 用户名为 admin" isrun="true">
+      <param id="condition">${username}==admin</param>
+      <step id="verify_contains" comment="断言欢迎语" isrun="true">
+        <param id="text">welcome admin to home</param>
+        <param id="sub">admin</param>
+      </step>
+    </step>
+    <step id="sap_login" comment="被砍掉的SAP关键字(应NOIMPL)" isrun="true">
+      <param id="user">x</param>
+    </step>
+  </case>
+  <after>
+    <step id="log" comment="结束" isrun="true">
+      <param id="message">用例结束</param>
+    </step>
+  </after>
+  <fault/>
+  <desc>
+    <author>zhou</author><createtime>2026-06-25 10:00:00</createtime>
+    <lastmodifyauthor>zhou</lastmodifyauthor><lastmodifytime>2026-06-25 10:30:00</lastmodifytime>
+    <versions>1.0</versions><description>登录用例样例</description>
+  </desc>
+  <datapool>DATATABLE(NONE,false)</datapool>
+</root>

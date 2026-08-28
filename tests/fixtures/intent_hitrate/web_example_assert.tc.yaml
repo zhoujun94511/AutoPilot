@@ -1,0 +1,46 @@
+type: testcase
+format_version: 2
+schema_version: "2.0"
+logical_case_id: hitrate-web-fixture
+case_key: HIT-WEB-FIX
+name: Intent命中率-本地Web夹具
+tag: INTENT
+platform: web
+is_execute: true
+datapool: DATATABLE(NONE,false)
+desc:
+  description: 打开本地 HTML 夹具，断言标题并点击 Login（稳定，不依赖外网文案）
+shells:
+  before:
+  - step: web_browser_open
+    comment: 打开本地夹具页（URL 由 harness 注入 __hitrate_web_url__）
+    is_run: true
+    params:
+      url: ${__hitrate_web_url__}
+      type: chrome
+  case:
+  - step: intent_act
+    comment: 断言 Intent Hitrate Home
+    remark: intent:w1|assert
+    is_run: true
+    params:
+      intent_id: w1
+      action: assert
+      target: Intent Hitrate Home
+      text: 标题可见
+      logical_case_id: hitrate-web-fixture
+  - step: intent_act
+    comment: 点击 Login
+    remark: intent:w2|click
+    is_run: true
+    params:
+      intent_id: w2
+      action: click
+      target: Login
+      text: 点击 Login
+      logical_case_id: hitrate-web-fixture
+  after:
+  - step: web_browser_quit
+    comment: 退出浏览器
+    is_run: true
+  fault: []

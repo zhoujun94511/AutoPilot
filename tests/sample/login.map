@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map ver="1.0">
+  <element name="login">
+    <comment>登录区</comment>
+    <locator type="ID">
+      <id><value>loginForm</value><mode>0</mode></id>
+      <name><value></value><mode>0</mode></name>
+      <text><value></value><mode>0</mode></text>
+      <class><value></value><mode>0</mode></class>
+      <xpath><value></value></xpath>
+      <css><value></value></css>
+    </locator>
+    <element name="userInput">
+      <comment>用户名输入框</comment>
+      <locator type="XPATH">
+        <id><value></value><mode>0</mode></id>
+        <name><value></value><mode>0</mode></name>
+        <text><value></value><mode>0</mode></text>
+        <class><value></value><mode>0</mode></class>
+        <xpath><value>//input[@id='username']</value></xpath>
+        <css><value></value></css>
+      </locator>
+    </element>
+  </element>
+</map>

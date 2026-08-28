@@ -1,0 +1,93 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / build outputs
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Local tooling and editor state
+.agents/
+skills-lock.json
+.claude/
+.cursor/
+.idea/
+.vscode/
+.git-alt/
+.git-template-empty/
+.DS_Store
+Thumbs.db
+
+# Local-only bulk / scratch (do not commit)
+referencedata/
+reverse/
+screenshots/
+tmp/
+/bindings/
+tests/live/
+
+# resources：除 go-ios DDI 与官方 executable 外均提交
+resources/re_go_ios/devimages/
+resources/re_go_ios/executable/
+
+# Logs and runtime artifacts
+logs/
+*.log
+*.tmp
+*.temp
+selfIdentity.plist
+*.pem
+*.p12
+*.pfx
+*.key
+*.mobileprovision
+Lockdown/
+docs/provenance/
+reports/
+autopilot_report_*.html
+autopilot_report_latest.html
+*.apk
+*.ipa
+*.xapk
+!resources/re_apks/*.apk
+!resources/re_uiautomator/*.apk
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Management console local DB（若仍用旧路径）
+/data/
+
+# Env（保留样例）
+.env
+.env.*
+!.env.example
+!**/.env.example
+platform.url
+!platform.url.example
+
+# Vue frontend（管理台已迁至 AutoPilot_Console；遗留路径忽略）
+managementconsole/frontend/node_modules/
+managementconsole/frontend/dist/

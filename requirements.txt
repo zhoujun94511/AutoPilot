@@ -1,0 +1,32 @@
+# AutoPilot - sync with pyproject.toml (IDE package requirements)
+# Install core:  pip install -e "."
+# Optional:      pip install -e ".[data,mirror,secure,icons,dev]"
+
+# core（与 [project].dependencies 一致）
+PyQt6>=6.6
+lxml>=5.0
+selenium>=4.20
+httpx>=0.27
+jsonpath-ng>=1.6
+Jinja2>=3.1
+openpyxl>=3.1
+Appium-Python-Client>=3.1
+pyaxmlparser>=0.3
+opencv-python-headless>=4.9
+numpy>=1.26
+cryptography>=42.0
+pymobiledevice3>=4.0
+psutil>=5.9
+PyYAML>=6.0
+
+pytest>=8.0
+
+# ---- 可选（按需安装；缺失时对应能力优雅降级） ----
+# 实时镜像（Android scrcpy H.264 解码 + 控制 / iOS AVFoundation 解码）
+#   pip install -e ".[mirror]"        # av>=12.0  adbutils>=2.0
+# 管理台密码 OS 钥匙串（缺失回退本机 Fernet 加密）
+#   pip install -e ".[secure]"        # keyring>=25
+# 美化图标：mdi6 矢量图标；缺失时 UI 自动降级为文字徽章
+#   pip install qtawesome             # qtawesome>=1.3
+# 品牌图标/favicon 生成（tools/export_icon.py，构建期用）
+#   pip install -e ".[dev]"           # Pillow>=10.0

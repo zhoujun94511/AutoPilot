@@ -1,0 +1,49 @@
+type: testcase
+format_version: 2
+schema_version: "2.0"
+logical_case_id: hitrate-ios-settings-assert
+case_key: HIT-IOS-ASSERT
+name: Intent命中率-iOS设置断言
+tag: INTENT
+platform: ios
+is_execute: true
+datapool: DATATABLE(NONE,false)
+desc:
+  description: 打开系统设置（Preferences），断言常见入口可见（不导航）
+shells:
+  before:
+  - step: appium_start
+    comment: WDA-direct 下自动跳过 Appium
+    is_run: true
+  - step: mobile_app_start
+    comment: 打开系统设置
+    is_run: true
+    params:
+      type: iOS
+      packageName: com.apple.Preferences
+  case:
+  - step: intent_act
+    comment: 断言 Wi-Fi 或 WLAN
+    remark: intent:s1|assert
+    is_run: true
+    params:
+      intent_id: s1
+      action: assert
+      target: Wi-Fi
+      text: Wi-Fi 可见
+      logical_case_id: hitrate-ios-settings-assert
+  - step: intent_act
+    comment: 断言 Bluetooth 或 蓝牙
+    remark: intent:s2|assert
+    is_run: true
+    params:
+      intent_id: s2
+      action: assert
+      target: Bluetooth
+      text: Bluetooth 可见
+      logical_case_id: hitrate-ios-settings-assert
+  after:
+  - step: mobile_app_close
+    comment: 关闭会话
+    is_run: true
+  fault: []

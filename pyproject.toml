@@ -1,0 +1,125 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "autopilot"
+version = "0.1.0"
+description = "关键字驱动自动化测试 IDE（Python + PyQt6）"
+requires-python = ">=3.10"
+license = { file = "LICENSE.txt" }
+dependencies = [
+    "PyQt6>=6.6",
+    "lxml>=5.0",
+    "selenium>=4.20",
+    # IDE / 执行核常用（顶层或主路径会 import；列入以免 PyCharm「项目要求」误报）
+    "httpx>=0.27",
+    "pytest>=8.0",  # tests/conftest；IDE 项目要求（与 optional dev 一致）
+    "jsonpath-ng>=1.6",
+    "Jinja2>=3.1",
+    "openpyxl>=3.1",
+    "Appium-Python-Client>=3.1",
+    "pyaxmlparser>=0.3",
+    "opencv-python-headless>=4.9",  # import cv2；IDE 项目要求
+    "numpy>=1.26",
+    "cryptography>=42.0",
+    # iOS 安装/卸载/在装检测（keywords.mobile.session 顶层 import；失败回退 go-ios）
+    "pymobiledevice3>=4.0",
+    # iOS 工具链进程识别（mobile.ios_bootstrap 懒 import；缺失时优雅降级）
+    "psutil>=5.9",
+    # 用例 YAML 序列化（model.serializer 顶层 import）
+    "PyYAML>=6.0",
+    # 可选强化：JSON Schema 断言（json_assert_schema）；未装时关键字给出明确提示
+    "jsonschema>=4.0",
+]
+
+[project.optional-dependencies]
+# 数据/中间件关键字：缺失时优雅降级
+data = [
+    "redis>=5.0",
+    "paramiko>=3.4",
+    "SQLAlchemy>=2.0",
+    "kafka-python>=2.0",
+    "elasticsearch>=8.0",
+    "happybase>=1.2",
+]
+# 实时镜像（scrcpy / iOS AVF 解码）
+mirror = ["av>=12.0", "adbutils>=2.0"]
+# 兼容旧分组名（已并入主依赖）
+http = []
+mobile = []
+image = []
+report = []
+# 管理台为独立服务端仓 AutoPilot_Console；本仓为客户端（IDE + TestRunner）。
+dev = ["pytest>=8.0", "ruff>=0.5", "Pillow>=10.0"]   # Pillow：tools/export_icon.py 生成品牌图标/favicon
+# IDE 管理台密码优先 OS 钥匙串；未装则回退本机 Fernet（cryptography 已在主依赖）
+secure = ["keyring>=25"]
+# 美化图标：mdi6 矢量图标；缺失时 UI 自动降级为文字徽章（pip install qtawesome）
+icons = ["qtawesome>=1.3"]
+# TestRunner HTTP 客户端依赖已在主依赖（httpx 等）。
+# 无 GUI 机房 Agent 主路径在 Platform：pip install -e ".[runner]" → autopilot_platform.runner
+# 本 extra 留空，避免误以为 IDE 仓 .[runner] 能去 PyQt。
+runner = []
+# 可选 Web 引擎（AUTOPILOT_WEB_ENGINE=playwright）；未装时回退 selenium 并给出明确错误
+web_playwright = ["playwright>=1.40"]
+
+[project.scripts]
+autopilot = "autopilot.app:run"
+# IDE 镜像 Runner 快捷入口（≠ Platform 无 GUI Agent）
+autopilot-runner = "autopilot.runner.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["autopilot*"]
+
+# 关键字定义 XML 是应用数据，随包发布
+[tool.setuptools.package-data]
+autopilot = ["metadata/keyword_defs/*.xml"]
+
+# 二进制资源(re_adb / re_go_ios)放在仓库根 resources/，体量大、不打进 wheel，
+# 随源码部署、运行期由代码按仓库根路径定位。
+
+[tool.pyright]
+# 源码为 flat layout：autopilot 包位于仓库根。
+# 让 basedpyright / pyright 从仓库根解析 `autopilot.*` 绝对导入。
+extraPaths = ["."]
+# 采用宽松档：只保留基础检查（解决“无法解析导入”即可），
+# 不启用 basedpyright 默认 recommended 档的 reportUnknown* / 泛型参数等严格噪音。
+typeCheckingMode = "basic"
+reportMissingTypeArgument = false
+# Protocol 方法仅 docstring 体的误报
+reportReturnType = false
+# 第三方库私有子模块导入的误报
+reportPrivateImportUsage = false
+# 第三方 C 扩展/无类型库（lxml.etree 等）符号解析的误报
+reportAttributeAccessIssue = false
+exclude = [
+    "**/__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    ".idea",
+    "referencedata",
+    "reverse",
+    "docs/provenance",
+]
+
+[tool.ruff]
+# autocheck 调用的广度静态检查（与手写定向检查互补）。聚焦“真错”家族，不追求风格洁癖；
+# 锁 py310 让 ruff 能拦“3.12 才合法”的写法（如 f-string 内反斜杠）。
+line-length = 100
+target-version = "py310"
+extend-exclude = [
+    ".venv", "venv", "referencedata", "reverse", "docs/provenance",
+    "build", "dist", ".idea", "__pycache__",
+]
+
+[tool.ruff.lint]
+# 默认集（F + E4/E7/E9）即与 PyCharm 重叠最大的“真错”面：
+# 未用/未定义名、重定义、f-string 误用、比较 None/True、跨版本语法等。
+select = ["F", "E4", "E7", "E9"]
+ignore = ["E702"]   # 测试里 `a(); b()` 紧凑写法是有意为之
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]   # 包初始化多为再导出，未用导入不算问题
+"tests/**" = ["E402"]         # 测试先 sys.path.insert 再 import 项目包，属既定写法

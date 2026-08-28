@@ -1,0 +1,142 @@
+type: testcase
+format_version: 1
+name: TEST002
+data_id: ''
+tag: ''
+platform: ios
+is_execute: true
+able_invoked: false
+datapool: DATATABLE(NONE,false)
+desc: {}
+shells:
+  before: []
+  case:
+  - step: appium_start
+    comment: 启动appium服务（Android/iOS 通用）
+  - step: mobile_app_install_and_open
+    comment: 安装并打开移动应用(准备开始测试)。已安装时可选择保留旧数据或先卸载后重装；未安装时直接安装。
+    params:
+      type: ios
+      appFile: D:\testscope\AIID\ipa\aitou.ipa
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '3000'
+  - step: elementClick
+    comment: 判断控件是否存在，存在则点击；不存在则不做操作
+    params:
+      locator: 'predicate::label == "WLAN & Cellular"'
+      timeout: '5000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Agree']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_swipe_direction
+    comment: 触摸滑屏，可按上、下、左、右方向滑动（Android/iOS 通用）
+    params:
+      direction: 左
+      size: 全屏
+      count: '2'
+      duration: '300'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Try Now']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: 'predicate::label == "Allow"'
+      timeout: '15000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: 'predicate::label == "Next"'
+      timeout: '15000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: 'predicate::value == "Next"'
+      timeout: '15000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: 'predicate::label == "Done"'
+      timeout: '15000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Mirroring']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Receive']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Manage']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_element_click
+    comment: 根据定位符查找控件，并模拟真实点击该控件
+    params:
+      locator: xpath:://*[@name='Me']
+      timeout: '30000'
+  - step: web_common_sleep
+    comment: 在进行下一操作前，等待一段时间（单位：毫秒，例如：等待5秒请输入5000）
+    params:
+      millis: '1000'
+  - step: mobile_app_adb_uninstall
+    comment: 卸载设备上的被测应用(Android/iOS)。走设备层 adb 或 pymobiledevice3/go-ios，无需已建 Appium/WDA
+      会话。关键字 id 保留历史 adb 命名。
+    params:
+      type: ios
+      packageName: imobile.broadcast.app
+  after: []
+  fault: []

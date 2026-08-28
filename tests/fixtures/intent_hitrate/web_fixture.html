@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Intent Hitrate Fixture</title>
+</head>
+<body>
+  <h1>Intent Hitrate Home</h1>
+  <p>Sample page for AutoPilot intent E2E.</p>
+  <label for="user">Username</label>
+  <input id="user" name="user" placeholder="Username" />
+  <button id="login" type="button">Login</button>
+  <a id="more" href="#details">More information</a>
+  <div id="details" hidden>Details ok</div>
+  <script>
+    document.getElementById("login").addEventListener("click", function () {
+      document.getElementById("details").hidden = false;
+    });
+  </script>
+</body>
+</html>

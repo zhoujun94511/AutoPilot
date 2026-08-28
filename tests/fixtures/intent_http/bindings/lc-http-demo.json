@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "logical_case_id": "lc-http-demo",
+  "revision_id": "",
+  "steps": {
+    "s1": {
+      "channel": "http",
+      "platform": "http",
+      "method": "GET",
+      "path": "/api/v1/health",
+      "assert": { "status": "200-299" },
+      "keyword_id": "http_get",
+      "params": { "url": "/api/v1/health" },
+      "follow_ups": [
+        {
+          "keyword_id": "http_assert_status",
+          "params": { "expected": "200-299" }
+        }
+      ],
+      "resolver": "manual",
+      "candidates": [],
+      "heal_count": 0
+    }
+  }
+}

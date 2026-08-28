@@ -1,0 +1,19 @@
+# 企业部署：复制本文件为 platform.url（与 AutoPilot.exe 同目录）
+# 或放到 %ProgramData%\AutoPilot\platform.url
+# 也可设环境变量 AUTOPILOT_PLATFORM_URL（与文件二选一即可）
+#
+# 本文件 **只配 Platform 根 URL**（一行，含 http(s):// 和端口，不要引号）。
+# 服务端证书（MC_SSL_*）、私钥等只在 Platform 服务器配置，不在 IDE 安装包内。
+#
+# 公网 CA 的 https://：用户机通常无需额外配置。
+# 企业内网私有 CA：由 IT 通过组策略等下发 AUTOPILOT_SSL_CA_FILE（见 docs/CONFIGURATION.md §1）。
+#
+# 注意：platform.url.example 不会被程序读取，必须改名为 platform.url
+#
+# HTTPS 反代（须与服务端 MC_PLATFORM_URL 一致）：
+https://autopilot.example.com
+#
+# 内网 HTTP：
+# http://192.168.1.10:8000
+#
+# 文档：docs/CONFIGURATION.md §1、docs/packaging.md

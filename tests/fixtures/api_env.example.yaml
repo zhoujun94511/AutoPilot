@@ -1,0 +1,13 @@
+# API 环境配置示例（放到工程根或 config/）
+#
+# 用例中：api_env_use  profile=dev
+
+profiles:
+  dev:
+    base_url: http://127.0.0.1:8000
+    vars:
+      api_token: "dev-token"
+  staging:
+    base_url: https://staging.example.com
+    vars:
+      api_token: "staging-token"

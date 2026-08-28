@@ -1,0 +1,39 @@
+type: testcase
+format_version: 2
+schema_version: "2.0"
+logical_case_id: hitrate-ios-settings-click
+case_key: HIT-IOS-CLICK
+name: Intent命中率-iOS设置点击
+tag: INTENT
+platform: ios
+is_execute: true
+datapool: DATATABLE(NONE,false)
+desc:
+  description: 点击系统设置首页入口（Wi-Fi），测 click 解析命中
+shells:
+  before:
+  - step: appium_start
+    comment: WDA-direct 下自动跳过 Appium
+    is_run: true
+  - step: mobile_app_start
+    comment: 打开系统设置
+    is_run: true
+    params:
+      type: iOS
+      packageName: com.apple.Preferences
+  case:
+  - step: intent_act
+    comment: 点击 Wi-Fi
+    remark: intent:c1|click
+    is_run: true
+    params:
+      intent_id: c1
+      action: click
+      target: Wi-Fi
+      text: 点击 Wi-Fi
+      logical_case_id: hitrate-ios-settings-click
+  after:
+  - step: mobile_app_close
+    comment: 关闭会话
+    is_run: true
+  fault: []

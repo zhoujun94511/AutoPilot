@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map ver="1.0">
+  <element name="login">
+    <comment>登录区</comment>
+    <locator type="ID">
+      <id><value>loginForm</value><mode>0</mode></id>
+      <name><value></value><mode>0</mode></name>
+      <text><value></value><mode>0</mode></text>
+      <class><value></value><mode>0</mode></class>
+      <xpath><value></value></xpath>
+      <css><value></value></css>
+    </locator>
+    <element name="userInput">
+      <comment>用户名(XPATH)</comment>
+      <locator type="XPATH">
+        <id><value></value><mode>0</mode></id>
+        <name><value></value><mode>0</mode></name>
+        <text><value></value><mode>0</mode></text>
+        <class><value></value><mode>0</mode></class>
+        <xpath><value>//input[@id='username']</value></xpath>
+        <css><value></value></css>
+      </locator>
+    </element>
+    <element name="submitBtn">
+      <comment>提交(复合AND)</comment>
+      <locator type="AND">
+        <tag>button</tag>
+        <properties>
+          <property name="type" mode="0">submit</property>
+          <property name="class" mode="0">btn-primary</property>
+        </properties>
+      </locator>
+    </element>
+  </element>
+  <element name="banner">
+    <comment>顶部(CSS)</comment>
+    <locator type="CSS">
+      <id><value></value><mode>0</mode></id>
+      <name><value></value><mode>0</mode></name>
+      <text><value></value><mode>0</mode></text>
+      <class><value></value><mode>0</mode></class>
+      <xpath><value></value></xpath>
+      <css><value>.top-banner</value></css>
+    </locator>
+  </element>
+</map>

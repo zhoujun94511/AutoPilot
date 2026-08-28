@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<root ver="1.0" db_id="case001" mock_id="" need_update="false"
+      is_run="true" is_able_invoked="false" relate_manual_id=""
+      has_inner_case="true" has_monkey_step="false" tag="WEB">
+  <before>
+    <step id="set_var" comment="初始化" isrun="true">
+      <param id="name">env</param><param id="value">prod</param>
+    </step>
+  </before>
+  <case>
+    <stepset name="登录组" comment="带数据池的步骤组" datapool="DATATABLE(users,false)" isrun="true">
+      <step id="web_element_text_input" comment="输入用户名" isrun="true">
+        <param id="locator">map::login::userInput</param>
+        <param id="text">COLUMN(username,guest)</param>
+        <param id="isClear">是</param>
+      </step>
+      <stepverbs id="ks001" comment="调用自定义关键字-提交" isrun="true">
+        <param id="pwd">123456</param>
+      </stepverbs>
+    </stepset>
+    <step id="exec_control_if_else_end" comment="判断环境" isrun="true">
+      <param id="param1">${env}</param>
+      <param id="param2">prod</param>
+      <param id="expResult">等于(精确匹配)</param>
+      <step id="log" comment="生产环境分支" isrun="true">
+        <param id="message">prod branch</param>
+      </step>
+      <step id="else" comment="否则"/>
+      <step id="log" comment="测试环境分支" isrun="true">
+        <param id="message">test branch</param>
+      </step>
+    </step>
+    <step id="keyword_loop_start" comment="重试循环" isrun="true">
+      <param id="datapool_source_type">无</param>
+      <param id="cycle_times">2</param>
+      <param id="loop_failure_strategy">continue</param>
+    </step>
+    <step id="log" comment="循环体" isrun="true">
+      <param id="message">retry</param>
+    </step>
+    <step id="keyword_loop_end" comment="循环结束" isrun="true"/>
+    <stepinnercase relativepath="login/sub.tc" comment="内嵌子用例" isrun="true"/>
+  </case>
+  <after/>
+  <fault/>
+  <desc>
+    <author>tester</author><createtime>2020-01-01 09:00:00</createtime>
+    <lastmodifyauthor>tester</lastmodifyauthor><lastmodifytime>2020-01-02 10:00:00</lastmodifytime>
+    <versions>1.0</versions><description>综合特性回归用例</description>
+  </desc>
+  <datapool>DATATABLE(NONE,false)</datapool>
+</root>

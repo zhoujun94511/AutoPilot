@@ -1,0 +1,28 @@
+schema_version: "2.0"
+name: TC-http-health-demo
+logical_case_id: lc-http-demo
+shells:
+  before:
+    - step: http_session_begin
+      comment: 开启 HTTP 会话（请按环境配置 base_url）
+      is_run: true
+      params:
+        base_url: "${base_url}"
+        timeout: "20"
+  case:
+    - step: intent_act
+      comment: GET /api/v1/health
+      remark: intent:s1|custom
+      is_run: true
+      params:
+        intent_id: s1
+        action: custom
+        target: /api/v1/health
+        value: ""
+        text: GET /api/v1/health
+        logical_case_id: lc-http-demo
+        channel: http
+  after:
+    - step: http_session_end
+      comment: 关闭 HTTP 会话
+      is_run: true

@@ -1,0 +1,26 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Mini API", "version": "1.0.0" },
+  "servers": [{ "url": "https://api.example.com" }],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Health check",
+        "responses": { "200": { "description": "ok" } }
+      }
+    },
+    "/api/v1/orders": {
+      "get": {
+        "operationId": "listOrders",
+        "summary": "List orders",
+        "responses": { "200": { "description": "ok" } }
+      },
+      "post": {
+        "operationId": "createOrder",
+        "summary": "Create order",
+        "responses": { "201": { "description": "created" } }
+      }
+    }
+  }
+}

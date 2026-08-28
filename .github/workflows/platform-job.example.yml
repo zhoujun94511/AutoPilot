@@ -1,0 +1,76 @@
+# Platform 批跑触发示例（B1-C）
+#
+# 复制到自有流水线或改名为可运行 workflow。
+# 本文件默认不挂 push/schedule，避免误触发真实机房任务。
+
+name: platform-job-example
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_id:
+        description: Platform 工程制品 ID
+        required: true
+        type: string
+      platform:
+        description: android | ios | web
+        required: true
+        default: android
+        type: string
+      device_udids:
+        description: 逗号分隔 UDID；可空（若 Platform 允许）
+        required: false
+        default: ""
+        type: string
+      project_id:
+        description: 可选 project_id
+        required: false
+        default: ""
+        type: string
+      wait:
+        description: 是否等待 Job 终态
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # 本 workflow 只「创建 Job」。真机 Runner 在机房装 Platform：
+      #   pip install -e ".[runner]" && python -m autopilot_platform.runner
+      # 此处用 IDE 仓 create-job CLI（HTTP 客户端）；勿与无 GUI Agent 混为一谈。
+      - name: Install create-job client (IDE repo)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Create Platform job
+        env:
+          MC_SERVER: ${{ secrets.MC_SERVER }}
+          MC_API_TOKEN: ${{ secrets.MC_API_TOKEN }}
+          MC_ORG_ID: ${{ secrets.MC_ORG_ID }}
+        run: |
+          set -euo pipefail
+          EXTRA=()
+          if [ -n "${{ inputs.device_udids }}" ]; then
+            EXTRA+=(--device-udids "${{ inputs.device_udids }}")
+          fi
+          if [ -n "${{ inputs.project_id }}" ]; then
+            EXTRA+=(--project-id "${{ inputs.project_id }}")
+          fi
+          if [ "${{ inputs.wait }}" = "true" ]; then
+            EXTRA+=(--wait)
+          fi
+          python -m autopilot.mgmt create-job \
+            --artifact-id "${{ inputs.artifact_id }}" \
+            --platform "${{ inputs.platform }}" \
+            --name "gha-${{ github.run_id }}" \
+            "${EXTRA[@]}"

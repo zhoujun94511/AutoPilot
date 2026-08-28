@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <title>PW Suite Fixture</title>
+  <style>
+    #hidden { display: none; }
+    #offscreen { position: absolute; top: 3000px; left: 0; }
+    #src { width: 48px; height: 48px; background: #c00; color: #fff; display: inline-block; }
+    #dst { width: 120px; height: 80px; background: #06c; color: #fff; margin-left: 160px; display: inline-block; }
+    #slider { width: 40px; height: 40px; background: #080; position: relative; left: 0; }
+    #track { width: 320px; height: 40px; background: #ddd; margin-top: 16px; }
+    iframe { width: 280px; height: 80px; border: 1px solid #999; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Suite</h1>
+  <a id="nav-b" href="web_pw_suite_b.html">Go B</a>
+
+  <select id="combo">
+    <option value="a">Alpha</option>
+    <option value="b">Bravo</option>
+    <option value="c">Charlie</option>
+  </select>
+
+  <button id="btn" type="button">Act</button>
+  <button id="btn-js" type="button" onclick="this.dataset.js='1'">JS</button>
+  <button id="btn-alert" type="button">Alert</button>
+  <button id="btn-confirm" type="button">Confirm</button>
+  <button id="btn-prompt" type="button">Prompt</button>
+  <button id="btn-new" type="button">NewWin</button>
+  <img id="img-mark" src="pw_mark.png" width="64" height="64" alt="mark"/>
+  <!-- 背景即模板图，便于 image_type 的 elementFromPoint 落到可输入控件 -->
+  <input id="img-inp" type="text" value=""
+         style="width:64px;height:64px;padding:0;border:0;background:url(pw_mark.png) center/cover no-repeat;color:transparent"/>
+  <input id="inp" type="text" value="init" name="user"/>
+  <button id="btn-role" type="button" role="button">RoleBtn</button>
+  <a id="link-text" href="#here">ExactLink</a>
+  <div id="by-class" class="cls-mark">ClassMark</div>
+  <select id="multi" multiple size="3">
+    <option value="m1">M1</option>
+    <option value="m2">M2</option>
+    <option value="m3">M3</option>
+  </select>
+  <input id="chk" type="checkbox"/>
+  <input id="rad1" type="radio" name="r" value="1"/>
+  <input id="rad2" type="radio" name="r" value="2"/>
+  <input id="file" type="file"/>
+  <button id="disabled" type="button" disabled>Disabled</button>
+  <span id="hidden">hidden</span>
+  <div id="offscreen">far</div>
+  <span class="item">i1</span><span class="item">i2</span><span class="item">i3</span>
+
+  <table id="tbl"><tr><td>r1c1</td><td>r1c2</td></tr><tr><td>r2c1</td><td>r2c2</td></tr></table>
+
+  <div>
+    <div id="src" draggable="true">SRC</div>
+    <div id="dst">DST</div>
+  </div>
+  <div id="track"><div id="slider">SL</div></div>
+
+  <iframe id="fr" srcdoc="<html><body><p id='in-frame'>inside-frame</p></body></html>"></iframe>
+  <iframe id="fr-nest" srcdoc="<html><body><iframe id='inner' srcdoc='&lt;html&gt;&lt;body&gt;&lt;p id=&quot;in-nested&quot;&gt;nested-deep&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;'></iframe></body></html>"></iframe>
+
+  <pre id="log"></pre>
+  <script>
+    const log = (k, v) => {
+      window.__events = window.__events || {};
+      window.__events[k] = v;
+      document.getElementById("log").textContent = JSON.stringify(window.__events);
+    };
+    window.__events = {};
+
+    const btn = document.getElementById("btn");
+    btn.addEventListener("click", () => log("click", (window.__events.click || 0) + 1));
+    btn.addEventListener("dblclick", () => log("dbl", 1));
+    btn.addEventListener("contextmenu", (e) => { e.preventDefault(); log("ctx", 1); });
+    btn.addEventListener("mouseenter", () => log("hov", 1));
+    document.getElementById("offscreen").addEventListener("click", () => log("off_click", 1));
+
+    document.getElementById("btn-alert").addEventListener("click", () => alert("hello-alert"));
+    document.getElementById("btn-confirm").addEventListener("click", () => {
+      log("confirm", confirm("sure?") ? "ok" : "cancel");
+    });
+    document.getElementById("btn-prompt").addEventListener("click", () => {
+      log("prompt_val", prompt("enter-name", "") || "");
+    });
+    document.getElementById("img-mark").addEventListener("click", () => log("img_click", 1));
+    document.getElementById("img-mark").addEventListener("dblclick", () => log("img_dbl", 1));
+    document.getElementById("img-mark").addEventListener("contextmenu", (e) => {
+      e.preventDefault(); log("img_ctx", 1);
+    });
+    document.getElementById("btn-new").addEventListener("click", () => {
+      window.open("web_pw_suite_b.html", "_blank");
+    });
+
+    const dst = document.getElementById("dst");
+    dst.addEventListener("dragover", (e) => e.preventDefault());
+    dst.addEventListener("drop", () => log("drop", 1));
+
+    const slider = document.getElementById("slider");
+    let dragging = false, startX = 0, originLeft = 0;
+    slider.addEventListener("mousedown", (e) => {
+      dragging = true; startX = e.clientX; originLeft = slider.offsetLeft; log("hold", 1);
+    });
+    document.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      slider.style.left = Math.max(0, originLeft + dx) + "px";
+      log("slide_dx", dx);
+    });
+    document.addEventListener("mouseup", () => { if (dragging) { dragging = false; log("release", 1); } });
+
+    document.getElementById("inp").addEventListener("keydown", (e) => {
+      if (e.ctrlKey && (e.key === "a" || e.key === "A")) log("ctrl_a", 1);
+    });
+  </script>
+</body>
+</html>

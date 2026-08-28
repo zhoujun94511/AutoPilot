@@ -1,0 +1,39 @@
+type: testcase
+format_version: 2
+schema_version: "2.0"
+logical_case_id: hitrate-android-settings-click
+case_key: HIT-AND-CLICK
+name: Intent命中率-Settings点击
+tag: INTENT
+platform: android
+is_execute: true
+datapool: DATATABLE(NONE,false)
+desc:
+  description: 点击 Settings 首页入口（英文 ROM），测 click 解析命中
+shells:
+  before:
+  - step: appium_start
+    comment: 确保 Appium 就绪
+    is_run: true
+  - step: mobile_app_start
+    comment: 打开系统设置
+    is_run: true
+    params:
+      type: Android
+      packageName: com.android.settings
+  case:
+  - step: intent_act
+    comment: 点击 About phone
+    remark: intent:c1|click
+    is_run: true
+    params:
+      intent_id: c1
+      action: click
+      target: About phone
+      text: 点击 About phone
+      logical_case_id: hitrate-android-settings-click
+  after:
+  - step: mobile_app_close
+    comment: 关闭会话
+    is_run: true
+  fault: []

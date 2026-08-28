@@ -1,0 +1,3 @@
+# IDE 管理台密码 OS 钥匙串（与 pyproject.toml extra `secure` 对齐）
+# PyCharm「项目要求」可附加本文件；安装：pip install -e ".[secure]"
+keyring>=25

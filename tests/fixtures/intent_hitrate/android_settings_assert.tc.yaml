@@ -1,0 +1,69 @@
+type: testcase
+format_version: 2
+schema_version: "2.0"
+logical_case_id: hitrate-android-settings-assert
+case_key: HIT-AND-ASSERT
+name: Intent命中率-Settings断言
+tag: INTENT
+platform: android
+is_execute: true
+datapool: DATATABLE(NONE,false)
+desc:
+  description: 系统设置首页可见文案断言（不导航），测启发式/绑定/自愈命中
+shells:
+  before:
+  - step: appium_start
+    comment: 确保 Appium 就绪
+    is_run: true
+  - step: mobile_app_start
+    comment: 打开系统设置
+    is_run: true
+    params:
+      type: Android
+      packageName: com.android.settings
+  case:
+  - step: intent_act
+    comment: 断言 Wi-Fi
+    remark: intent:s1|assert
+    is_run: true
+    params:
+      intent_id: s1
+      action: assert
+      target: Wi-Fi
+      text: Wi-Fi 可见
+      logical_case_id: hitrate-android-settings-assert
+  - step: intent_act
+    comment: 断言 Bluetooth
+    remark: intent:s2|assert
+    is_run: true
+    params:
+      intent_id: s2
+      action: assert
+      target: Bluetooth
+      text: Bluetooth 可见
+      logical_case_id: hitrate-android-settings-assert
+  - step: intent_act
+    comment: 断言 VPN
+    remark: intent:s3|assert
+    is_run: true
+    params:
+      intent_id: s3
+      action: assert
+      target: VPN
+      text: VPN 可见
+      logical_case_id: hitrate-android-settings-assert
+  - step: intent_act
+    comment: 断言 About phone
+    remark: intent:s4|assert
+    is_run: true
+    params:
+      intent_id: s4
+      action: assert
+      target: About phone
+      text: About phone 可见
+      logical_case_id: hitrate-android-settings-assert
+  after:
+  - step: mobile_app_close
+    comment: 关闭会话
+    is_run: true
+  fault: []
