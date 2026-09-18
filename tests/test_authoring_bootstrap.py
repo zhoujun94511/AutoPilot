@@ -354,7 +354,7 @@ def test_prepare_session_uses_project_platform(tmp_path, monkeypatch):
     )
     boot = prepare_authoring_session(
         AuthoringRequest(
-            natural_language="点击登录按钮",
+            natural_language="打开Demo应用并点击登录按钮",
             platform="",
             mode="session",
             project_dir=str(tmp_path),
@@ -413,6 +413,111 @@ def test_prepare_session_start_url_wins_over_project_platform(tmp_path, monkeypa
         allow_nl_llm=False,
     )
     assert boot.request.platform == "web"
+
+
+def test_ambiguous_app_match_raises_with_candidates(monkeypatch):
+    from autopilot.authoring import app_resolve as ar
+    from autopilot.authoring.app_resolve import AppResolveAmbiguousError
+
+    apps = [
+        InstalledApp("com.acme.demo", "Demo App", "ios"),
+        InstalledApp("com.acme.demo.dev", "Demo Client", "ios"),
+    ]
+    monkeypatch.setattr(ar, "list_ios_installed_apps", lambda udid="": apps)
+    with pytest.raises(AppResolveAmbiguousError) as exc:
+        ar.resolve_installed_app("ios", udid="U1", app_name="demo")
+    assert len(exc.value.candidates) >= 2
+    assert exc.value.candidates[0].package_name in {
+        "com.acme.demo",
+        "com.acme.demo.dev",
+    }
+
+
+def test_not_found_includes_top_candidates(monkeypatch):
+    from autopilot.authoring import app_resolve as ar
+    from autopilot.authoring.app_resolve import AppResolveNotFoundError
+
+    monkeypatch.setattr(
+        ar,
+        "list_ios_installed_apps",
+        lambda udid="": [
+            InstalledApp("com.other.foo", "Foo", "ios"),
+            InstalledApp("com.other.bar", "Bar", "ios"),
+        ],
+    )
+    with pytest.raises(AppResolveNotFoundError) as exc:
+        ar.resolve_installed_app("ios", udid="U1", app_name="不存在")
+    assert len(exc.value.candidates) == 2
+
+
+def test_prepare_session_use_current_app_skips_resolve(monkeypatch):
+    monkeypatch.setattr(
+        "autopilot.authoring.session_bootstrap._pick_udid",
+        lambda platform, preferred="", **kw: "UDID-1",
+    )
+
+    def _fail_resolve(*_a, **_k):
+        raise AssertionError("resolve_installed_app should not run")
+
+    monkeypatch.setattr(
+        "autopilot.authoring.session_bootstrap.resolve_installed_app",
+        _fail_resolve,
+    )
+    boot = prepare_authoring_session(
+        AuthoringRequest(
+            natural_language="在当前页面点击登录",
+            platform="ios",
+            mode="session",
+            use_current_app=True,
+        )
+    )
+    assert boot.request.use_current_app is True
+    assert boot.request.package_name == ""
+    assert boot.udid == "UDID-1"
+    assert any("当前前台应用" in n for n in boot.notes)
+
+
+def test_prepare_session_pick_app_disambiguates(monkeypatch):
+    from autopilot.authoring.app_resolve import AppResolveAmbiguousError
+
+    monkeypatch.setattr(
+        "autopilot.authoring.session_bootstrap._pick_udid",
+        lambda platform, preferred="", **kw: "UDID-1",
+    )
+    monkeypatch.setattr(
+        "autopilot.authoring.session_bootstrap.resolve_installed_app",
+        lambda platform, **kw: (_ for _ in ()).throw(
+            AppResolveAmbiguousError(
+                "ambiguous",
+                candidates=[
+                    InstalledApp("com.a.demo", "Demo", "ios"),
+                    InstalledApp("com.a.demo.dev", "Demo Dev", "ios"),
+                ],
+            )
+        ),
+    )
+    boot = prepare_authoring_session(
+        AuthoringRequest(
+            natural_language="打开 Demo 应用",
+            platform="ios",
+            mode="session",
+            app_label="Demo",
+        ),
+        pick_app=lambda _hint, cands: cands[1],
+    )
+    assert boot.request.package_name == "com.a.demo.dev"
+
+
+def test_bootstrap_start_step_skips_for_current_app():
+    from autopilot.authoring.agent import _bootstrap_start_step
+
+    req = AuthoringRequest(
+        natural_language="x",
+        platform="ios",
+        package_name="com.example.app",
+        use_current_app=True,
+    )
+    assert _bootstrap_start_step(req, "ios") is None
 
 
 def test_prepare_session_empty_platform_raises():

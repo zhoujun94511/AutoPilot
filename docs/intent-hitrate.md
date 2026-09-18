@@ -23,13 +23,11 @@ python tools/intent_hitrate_run.py --platform ios --udid <ios-udid> --rounds 2 -
 # Vision / LLM 兜底（需 API Key）
 # DeepSeek V4 官方为纯文本：auto 模式只传 DOM 摘要（不传 image_url）。
 # 真截图多模态请改用 gpt-4o / Gemini，或自建支持 image_url 的网关 + IMAGE_MODE=force。
-# AutoPilot\.env 示例（DeepSeek DOM 文本）：
-#   AUTOPILOT_INTENT_VISION=1
+# AutoPilot\.env 示例（DeepSeek，只配三行）：
 #   DEEPSEEK_API_KEY=...
-#   AUTOPILOT_VISION_BASE_URL=https://api.deepseek.com
-#   AUTOPILOT_VISION_MODEL=deepseek-v4-flash
-#   AUTOPILOT_VISION_IMAGE_MODE=auto
-#   AUTOPILOT_VISION_DOM=1
+#   DEEPSEEK_BASE_URL=https://api.deepseek.com
+#   DEEPSEEK_MODEL=deepseek-v4-flash
+#   AUTOPILOT_INTENT_VISION=1
 python tools/intent_hitrate_run.py --platform android --udid <android-udid> --vision -v
 ```
 

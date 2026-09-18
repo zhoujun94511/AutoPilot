@@ -345,9 +345,7 @@ class FilesMixin(_Base):
             self._select_tab(nxt)
             self._show_doc(self._open_docs[nxt])
         else:
-            self._doc_tab_row.hide()
-            self.center.setCurrentWidget(self.welcome)
-            self._sync_step_editor_context()
+            self._show_idle_center()
 
     def _resync_active_doc(self) -> None:
         """保存后：把当前标签的 path/标题同步为模型的新 source_path（未命名→已保存）。"""
@@ -619,17 +617,61 @@ class FilesMixin(_Base):
         self.console.log("已新建自定义关键字：从右侧「关键字库」双击添加步骤，完成后点「保存」", "文件")
 
     def close_current(self) -> None:
-        """关闭当前标签页（多文件时切到相邻页，无页则回欢迎页）。"""
+        """关闭当前标签页（多文件时切到相邻页，无页则回到空编辑区或欢迎页）。"""
         idx = self._tab_bar.currentIndex()
         if 0 <= idx < len(self._open_docs):
             self._on_tab_close(idx)
         else:
+            self._show_idle_center()
+
+    def _has_open_project(self) -> bool:
+        return bool(self.project_dir) and os.path.isdir(self.project_dir)
+
+    def _show_idle_center(self) -> None:
+        """无打开文档时：有工程显示空编辑区，无工程显示欢迎页。"""
+        self._doc_tab_row.hide()
+        if self._has_open_project():
+            self.center.setCurrentWidget(self.empty_workspace)
+        else:
             self.center.setCurrentWidget(self.welcome)
-            self._sync_step_editor_context()
+        self._sync_step_editor_context()
+
+    def close_project(self) -> None:
+        """关闭当前工程：关全部标签，回到欢迎页（最近列表保留，下次启动不再自动恢复）。"""
+        if hasattr(self, "mirror"):
+            # noinspection PyBroadException
+            try:
+                self.mirror.stop()
+            except Exception:  # noqa: BLE001
+                pass
+        if hasattr(self, "_reset_inspect_session"):
+            self._reset_inspect_session()
+        self._close_all_docs()
+        self.project_dir = ""
+        self.project_tree.set_root("")
+        if getattr(self, "project_panel", None) is not None:
+            self.project_panel.set_actions_enabled(False)
+            self.project_panel.filter.clear()
+        self.param_form.set_project_dir("")
+        if hasattr(self, "search_results"):
+            self.search_results.set_project_dir("")
+        self.param_form.clear_step()
+        self._refresh_custom_keywords()
+        self._sync_keyword_editor_platform()
+        if hasattr(self, "_sync_ios_backend_controls"):
+            self._sync_ios_backend_controls()
+        settings.forget_last_project()
+        self._sync_sidebar_project()
+        self._sync_window_title()
+        self._show_idle_center()
+        self.console.log("已关闭工程", "工程")
 
     def save_current(self) -> None:
         """保存当前中央编辑器内容（用例/对象库/自定义关键字）为新格式 YAML。"""
         cur = self.center.currentWidget()
+        if cur in (self.welcome, getattr(self, "empty_workspace", None)):
+            self.console.log("没有可保存的内容", "文件", "WARNING")
+            return
         if cur is self.map_editor:
             self._save_map()
         elif cur is self.keyword_editor:
@@ -813,6 +855,7 @@ class FilesMixin(_Base):
         settings.remember_project(directory)   # 记住为上次工程，下次启动自动恢复
         self._sync_sidebar_project()
         self._sync_window_title()
+        self._show_idle_center()            # 打开工程不等于打开文件：停在空编辑区，不回欢迎页
         self.console.log(f"已打开工程：{directory}", "工程")
 
     def open_file_dialog(self) -> None:

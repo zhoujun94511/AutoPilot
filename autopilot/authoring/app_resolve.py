@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .contract import AuthoringError
+from .llm_client import ChatFn, complete_json
 from .system_app_aliases import (
     alias_entry,
     expand_hint_keys,
@@ -23,6 +24,28 @@ class InstalledApp:
     package_name: str
     app_label: str = ""
     platform: str = ""
+
+
+#: 歧义消歧：次高分与最高分分差 ≤ 此值且次高分 ≥ AMBIGUITY_MIN_SCORE 时要求用户选择
+AMBIGUITY_MAX_GAP = 10
+AMBIGUITY_MIN_SCORE = 60
+TOP_CANDIDATE_COUNT = 8
+
+
+class AppResolveError(AuthoringError):
+    """应用解析失败，可附带设备上最接近的候选列表。"""
+
+    def __init__(self, message: str, *, candidates: list[InstalledApp] | None = None) -> None:
+        super().__init__(message)
+        self.candidates: list[InstalledApp] = list(candidates or [])
+
+
+class AppResolveAmbiguousError(AppResolveError):
+    """多个候选分数接近，无法静默择一。"""
+
+
+class AppResolveNotFoundError(AppResolveError):
+    """无足够置信度的匹配。"""
 
 
 def _extract_json_object(text: str) -> str:
@@ -413,7 +436,9 @@ def _label_from_dumpsys(pkg: str, serial: str) -> str:
 
 def _label_from_apk(pkg: str, serial: str) -> str:
     import tempfile
+    import zipfile
 
+    from ..mobile.errors import PackageError
     apk_path = ""
     for line in _adb_text(["shell", "pm", "path", pkg], serial).splitlines():
         item = line.strip()
@@ -438,7 +463,7 @@ def _label_from_apk(pkg: str, serial: str) -> str:
             from ..mobile.apk import parse_apk
 
             return str(parse_apk(str(local)).app_name or "").strip()
-        except (ImportError, OSError, RuntimeError, ValueError):
+        except (ImportError, OSError, RuntimeError, ValueError, zipfile.BadZipFile, PackageError):
             return ""
 
 
@@ -498,12 +523,85 @@ def android_settings_component(udid: str = "") -> tuple[str, str]:
     return "com.android.settings", ""
 
 
+def _has_display_label(app: InstalledApp) -> bool:
+    label = (app.app_label or "").strip()
+    pkg = (app.package_name or "").strip()
+    return bool(label) and label.lower() != pkg.lower()
+
+
+def _apps_with_display_label(apps: list[InstalledApp]) -> list[InstalledApp]:
+    return [app for app in apps if _has_display_label(app)]
+
+
+def _fill_android_labels(apps: list[InstalledApp], *, udid: str) -> list[InstalledApp]:
+    """只给当前候选补显示名，供约束 LLM 使用。"""
+    serial = (udid or "").strip()
+    if not serial:
+        return list(apps)
+    out: list[InstalledApp] = []
+    for app in apps:
+        if _has_display_label(app):
+            out.append(app)
+            continue
+        label = android_app_label(app.package_name, serial)
+        out.append(
+            InstalledApp(
+                package_name=app.package_name,
+                app_label=label or app.app_label,
+                platform=app.platform or "android",
+            )
+        )
+    return out
+
+
+def pick_installed_app_via_llm(
+    hint: str,
+    apps: list[InstalledApp],
+    *,
+    chat: ChatFn | None = None,
+    limit: int = 24,
+) -> InstalledApp | None:
+    """对着已装列表做一次约束抽取；歧义或未命中返回 None，禁止编造。"""
+    name = (hint or "").strip()
+    labeled = _apps_with_display_label(list(apps))
+    if chat is None or not name or not labeled:
+        return None
+    allowed = {app.package_name: app for app in labeled if app.package_name}
+    if not allowed:
+        return None
+    lines = []
+    for app in labeled[: max(1, int(limit))]:
+        if not app.package_name:
+            continue
+        label = app.app_label or app.package_name
+        lines.append(f"{label} | {app.package_name}")
+    if not lines:
+        return None
+    prompt = (
+        "从已装应用中选出与用户说法最匹配的一个包名。\n"
+        f"用户说法：{name}\n"
+        "候选（显示名 | 包名）：\n"
+        + "\n".join(lines)
+        + "\n\n只输出 JSON：{\"package_name\":\"必须是候选里的包名或空串\"}\n"
+        "多个都像或没有把握时 package_name 必须为空。禁止编造未列出的包名。"
+    )
+    try:
+        data = complete_json(prompt, chat=chat, purpose="planning")
+    except AuthoringError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    pkg = str(data.get("package_name") or "").strip()
+    return allowed.get(pkg)
+
+
 def resolve_installed_app(
     platform: str,
     *,
     udid: str = "",
     app_name: str = "",
     package_name: str = "",
+    chat: ChatFn | None = None,
 ) -> InstalledApp:
     """按显式包名或应用名模糊匹配已装应用。"""
     plat = (platform or "").strip().lower()
@@ -534,18 +632,48 @@ def resolve_installed_app(
     if catalog_hit is not None:
         return catalog_hit
 
-    hit = _best_app_match(apps, hint, platform=plat)
-    if hit is None and plat == "android":
+    ranked = rank_app_matches(apps, hint, platform=plat)
+    if not ranked and plat == "android":
         # Android 的 pm list 只有包名，中文应用名必须补显示名再匹配
         apps = _enrich_android_labels(apps, udid=udid, hint=hint)
-        hit = _best_app_match(apps, hint, platform=plat)
-    if hit is None:
-        sample = ", ".join(a.app_label for a in apps[:8])
-        raise AuthoringError(
-            f"设备上未找到匹配「{hint}」的应用"
-            + (f"；示例：{sample}" if sample else "")
+        ranked = rank_app_matches(apps, hint, platform=plat)
+    if not ranked:
+        pool = list(apps)
+        if plat == "android":
+            pool = _fill_android_labels(
+                _top_resolve_candidates(apps, ranked), udid=udid
+            )
+        else:
+            pool = _top_resolve_candidates(apps, ranked)
+        picked = pick_installed_app_via_llm(hint, pool, chat=chat)
+        if picked is not None:
+            return picked
+        sample_apps = _apps_with_display_label(pool) or pool
+        sample = ", ".join(
+            f"{a.app_label or a.package_name} ({a.package_name})" for a in sample_apps[:4]
         )
-    return hit
+        raise AppResolveNotFoundError(
+            f"设备上未找到匹配「{hint}」的应用"
+            + (f"；相近示例：{sample}" if sample else ""),
+            candidates=sample_apps[:TOP_CANDIDATE_COUNT] or pool,
+        )
+    if _is_ambiguous_match(ranked):
+        ranked_apps = [app for _score, app in ranked[:TOP_CANDIDATE_COUNT]]
+        if plat == "android":
+            ranked_apps = _fill_android_labels(ranked_apps, udid=udid)
+        picked = pick_installed_app_via_llm(hint, ranked_apps, chat=chat)
+        if picked is not None:
+            return picked
+        raise AppResolveAmbiguousError(
+            f"应用「{hint}」匹配到多个相近候选，请指定包名或从列表选择",
+            candidates=ranked_apps,
+        )
+    hit = ranked[0][1]
+    return InstalledApp(
+        package_name=hit.package_name,
+        app_label=hit.app_label or hint,
+        platform=hit.platform or plat,
+    )
 
 
 def _resolve_via_catalog_alias(
@@ -653,15 +781,17 @@ def _enrich_android_labels(
     return out
 
 
-def _best_app_match(
+def rank_app_matches(
     apps: list[InstalledApp],
     hint: str,
     *,
     platform: str = "",
-) -> InstalledApp | None:
+    limit: int = TOP_CANDIDATE_COUNT,
+) -> list[tuple[int, InstalledApp]]:
+    """按与 hint 的相似度降序排列已装应用；供消歧与失败候选展示。"""
     keys = expand_hint_keys(platform or (apps[0].platform if apps else ""), hint)
     if not keys:
-        return None
+        return []
     scored: list[tuple[int, InstalledApp]] = []
     for app in apps:
         label = re.sub(r"[\s_\-]+", "", (app.app_label or "").lower())
@@ -681,6 +811,37 @@ def _best_app_match(
         if score:
             scored.append((score, app))
     if not scored:
-        return None
+        return []
     scored.sort(key=lambda x: (-x[0], len(x[1].package_name)))
-    return scored[0][1]
+    cap = max(1, int(limit))
+    return scored[:cap]
+
+
+def _is_ambiguous_match(ranked: list[tuple[int, InstalledApp]]) -> bool:
+    if len(ranked) < 2:
+        return False
+    top_score, second_score = ranked[0][0], ranked[1][0]
+    return second_score >= AMBIGUITY_MIN_SCORE and (top_score - second_score) <= AMBIGUITY_MAX_GAP
+
+
+def _top_resolve_candidates(
+    apps: list[InstalledApp],
+    ranked: list[tuple[int, InstalledApp]],
+) -> list[InstalledApp]:
+    if ranked:
+        return [app for _score, app in ranked[:TOP_CANDIDATE_COUNT]]
+    ordered = sorted(
+        apps,
+        key=lambda a: (a.app_label or a.package_name or "").lower(),
+    )
+    return ordered[:TOP_CANDIDATE_COUNT]
+
+
+def _best_app_match(
+    apps: list[InstalledApp],
+    hint: str,
+    *,
+    platform: str = "",
+) -> InstalledApp | None:
+    ranked = rank_app_matches(apps, hint, platform=platform, limit=1)
+    return ranked[0][1] if ranked else None

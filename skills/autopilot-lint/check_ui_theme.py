@@ -628,7 +628,9 @@ def audit_ui_theme(root: str | None = None) -> list[Violation]:
         ("map_editor", "widgets/map_editor.py", "MapEditor"),
         ("auxiliary_toolbar", "widgets/chrome/auxiliary_toolbar.py", "AuxiliaryRegionToolbar"),
         ("empty_state", "widgets/empty_state.py", "EmptyState"),
+        ("empty_state", "widgets/empty_state.py", "EmptyWorkspacePanel"),
         ("welcome_panel", "widgets/welcome_panel.py", "WelcomePanel"),
+        ("dialog_button_bar", "widgets/dialog_buttons.py", "DialogButtonBar"),
     ]
     for panel_name, rel_suffix, class_name in _init_checks:
         path = os.path.join(ui, rel_suffix)

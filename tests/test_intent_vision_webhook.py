@@ -7,6 +7,8 @@ import hmac
 import json
 from pathlib import Path
 
+import pytest
+
 from autopilot.intent.config import (
     vision_accepts_images,
     vision_provider_is_text_only,
@@ -44,9 +46,11 @@ def test_vision_accepts_images_modes(monkeypatch):
     monkeypatch.setenv("AUTOPILOT_VISION_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("AUTOPILOT_VISION_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "auto")
+    assert vision_accepts_images() is True
+    monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "off")
     assert vision_accepts_images() is False
     monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "force")
-    assert vision_accepts_images() is False, "force 不能绕过 DeepSeek 文本型号的能力"
+    assert vision_accepts_images() is True
     monkeypatch.setenv("AUTOPILOT_VISION_MODEL", "deepseek-v4-flash-vision-exp")
     monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "auto")
     assert vision_accepts_images() is True
@@ -57,8 +61,8 @@ def test_vision_accepts_images_modes(monkeypatch):
     assert vision_accepts_images() is False
 
 
-def test_deepseek_payload_skips_screenshot(monkeypatch):
-    import cv2
+def test_deepseek_payload_dom_only_when_image_mode_off(monkeypatch):
+    cv2 = pytest.importorskip("cv2")
     import numpy as np
 
     img = np.zeros((96, 64, 3), dtype=np.uint8)
@@ -68,9 +72,9 @@ def test_deepseek_payload_skips_screenshot(monkeypatch):
 
     monkeypatch.setenv("AUTOPILOT_VISION_SCREENSHOT", "1")
     monkeypatch.setenv("AUTOPILOT_VISION_DOM", "1")
-    monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "auto")
+    monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "off")
     monkeypatch.setenv("AUTOPILOT_VISION_BASE_URL", "https://api.deepseek.com")
-    monkeypatch.setenv("AUTOPILOT_VISION_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
     from autopilot.intent import vision_plugin as vp
 
@@ -95,9 +99,9 @@ def test_deepseek_payload_skips_screenshot(monkeypatch):
         ctx=object(),
         png=png,
     )
-    assert meta["text_only_provider"] is True
+    assert meta["text_only_provider"] is False
     assert meta["screenshot"] is False
-    assert meta["image_skipped_reason"] == "provider_text_only"
+    assert meta["image_skipped_reason"] == "image_mode=off"
     assert all(p.get("type") == "text" for p in parts)
     content = normalize_user_content(parts, accepts_images=False)
     assert isinstance(content, str)
@@ -105,8 +109,8 @@ def test_deepseek_payload_skips_screenshot(monkeypatch):
     assert "data:image" not in content
 
 
-def test_deepseek_vision_model_attaches_screenshot(monkeypatch):
-    import cv2
+def test_deepseek_v4_flash_config_attaches_screenshot(monkeypatch):
+    cv2 = pytest.importorskip("cv2")
     import numpy as np
 
     img = np.zeros((400, 300, 3), dtype=np.uint8)
@@ -119,7 +123,7 @@ def test_deepseek_vision_model_attaches_screenshot(monkeypatch):
     monkeypatch.setenv("AUTOPILOT_VISION_DOM", "1")
     monkeypatch.setenv("AUTOPILOT_VISION_IMAGE_MODE", "auto")
     monkeypatch.setenv("AUTOPILOT_VISION_BASE_URL", "https://api.deepseek.com")
-    monkeypatch.setenv("AUTOPILOT_VISION_MODEL", "deepseek-v4-flash-vision-exp")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 
     from autopilot.intent import vision_plugin as vp
 
@@ -168,7 +172,10 @@ def test_vision_model_defaults_deepseek_chat_to_vision(monkeypatch):
     monkeypatch.setenv("AP_AI_MODEL", "deepseek-v4-flash")
     assert vision_model() == DEFAULT_DEEPSEEK_VISION_MODEL
     monkeypatch.setenv("AUTOPILOT_VISION_MODEL", "deepseek-v4-flash")
-    assert vision_model() == "deepseek-v4-flash"
+    assert vision_model() == DEFAULT_DEEPSEEK_VISION_MODEL
+    monkeypatch.delenv("AUTOPILOT_VISION_MODEL", raising=False)
+    monkeypatch.setenv("AP_AI_LOCATE_MODEL", "deepseek-v4-flash")
+    assert vision_model() == DEFAULT_DEEPSEEK_VISION_MODEL
 
 
 def test_normalize_and_unsupported_image_helpers():
@@ -185,7 +192,8 @@ def test_normalize_and_unsupported_image_helpers():
 def test_call_vision_api_retries_text_only_on_unsupported_image(monkeypatch):
     calls: list[object] = []
 
-    def _fake_post(*, content, _key):
+    def _fake_post(*, content, key):
+        assert key == "sk-test"
         # 与 _post_vision_chat 契约一致：(text, data, usage)
         calls.append(content)
         if isinstance(content, list):

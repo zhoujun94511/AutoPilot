@@ -316,6 +316,8 @@ def _panel_mapping(mod) -> dict[str, str]:
         "ai_authoring_dialog": mod.AI_AUTHORING_DIALOG_QSS,
         "about_dialog": mod.ABOUT_DIALOG_QSS,
         "dialog_form": mod.DIALOG_FORM_QSS,
+        "dialog_button_bar": mod.DIALOG_BUTTON_BAR_QSS,
+        "confirm_dialog": mod.CONFIRM_DIALOG_QSS,
         "login_gate": mod.LOGIN_GATE_QSS,
         "console": mod.CONSOLE_QSS,
     }

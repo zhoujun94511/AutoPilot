@@ -13,6 +13,51 @@ from .contract import (
     is_authoring_blocked_keyword,
 )
 
+_MOBILE_NAVIGATION_KEYWORDS = frozenset({
+    "mobile_app_start",
+    "mobile_element_click",
+    "mobile_element_text_input",
+    "mobile_element_text_clear",
+    "mobile_presskey",
+    "mobile_swipe_direction",
+    "mobile_slip_for_element",
+    "mobile_wait_element_visible",
+    "mobile_verify_element_existed",
+    "mobile_verify_element_visible",
+    "mobile_verify_element_text",
+})
+_WEB_NAVIGATION_KEYWORDS = frozenset({
+    "web_browser_open",
+    "web_browser_locate",
+    "web_browser_back",
+    "web_browser_scroll_vertical_bar",
+    "web_browser_wait_for_exist",
+    "web_browser_wait_for_visible",
+    "web_element_click",
+    "web_element_text_input",
+    "web_verify_element_existed",
+    "web_verify_element_visible",
+    "web_verify_element_text",
+})
+_HTTP_CORE_KEYWORDS = frozenset({
+    "http_session_begin",
+    "http_session_end",
+    "http_get",
+    "http_post",
+    "http_put",
+    "http_patch",
+    "http_head",
+    "http_options",
+    "http_set_auth_bearer",
+    "http_set_auth_basic",
+    "http_set_auth_apikey",
+    "http_assert_status",
+    "http_assert_time_lt",
+    "http_assert_body_contains",
+    "json_assert_schema",
+    "api_env_use",
+})
+
 
 def _looks_relevant(kid: str, platform: str) -> bool:
     prefixes = PLATFORM_KEYWORD_PREFIXES.get(platform, ())
@@ -37,7 +82,18 @@ def build_keyword_catalog(
 
     catalog = load_catalog()
     out: list[dict[str, Any]] = []
-    for kid, meta in sorted(catalog.by_id.items(), key=lambda x: x[0]):
+
+    def _sort_key(item: tuple[str, Any]) -> tuple[int, str]:
+        sort_kid = item[0]
+        pinned = (
+            plat in ("android", "ios")
+            and sort_kid in _MOBILE_NAVIGATION_KEYWORDS
+        ) or (plat == "web" and sort_kid in _WEB_NAVIGATION_KEYWORDS) or (
+            plat == "http" and sort_kid in _HTTP_CORE_KEYWORDS
+        )
+        return 0 if pinned else 1, sort_kid
+
+    for kid, meta in sorted(catalog.by_id.items(), key=_sort_key):
         if is_authoring_blocked_keyword(kid):
             continue
         if getattr(meta, "unsupported", False):

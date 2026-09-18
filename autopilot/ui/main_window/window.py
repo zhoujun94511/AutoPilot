@@ -44,6 +44,7 @@ from ..widgets import (
     RightAuxiliaryRegion,
     SearchResultsPanel,
     WelcomePanel,
+    EmptyWorkspacePanel,
 )
 from ..widgets.chrome import StatusBarChrome
 from ..widgets.chrome.action_builder import (
@@ -162,6 +163,7 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
             self._refresh_custom_keywords()
         self._sync_sidebar_project()
         self._sync_window_title()
+        self._show_idle_center()
 
     def _sync_sidebar_project(self) -> None:
         if getattr(self, "_left_sidebar", None) is not None:
@@ -206,6 +208,7 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
             self.inspector,
             self.mirror,
             self.map_editor,
+            self.empty_workspace,
         ):
             if hasattr(widget, "apply_theme"):
                 widget.apply_theme(theme)
@@ -269,7 +272,7 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
 
     # ---- 组装 ----
     def _compose_layout(self) -> None:
-        # 中央区用堆叠：用例编辑器 / 对象库编辑器 按打开的文件切换
+        # 中央区用堆叠：无工程欢迎页 / 有工程空编辑区 / 各文档编辑器
         self.center = QStackedWidget()
         self.center.setObjectName("center_stack")
         self.welcome = WelcomePanel(parent=self)
@@ -277,14 +280,16 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
         self.welcome.open_project_dialog_requested.connect(self.open_project_dialog)
         self.welcome.new_project_dialog_requested.connect(self.new_project_dialog)
         self.welcome.new_case_requested.connect(self.new_case)
-        self.center.addWidget(self.welcome)         # 起始/关闭后停靠页
+        self.empty_workspace = EmptyWorkspacePanel(parent=self)
+        self.center.addWidget(self.welcome)          # 无工程：开始页
+        self.center.addWidget(self.empty_workspace)  # 有工程、无打开文档
         self.center.addWidget(self.case_editor)
         self.center.addWidget(self.map_editor)
         self.center.addWidget(self.keyword_editor)
         self.center.addWidget(self.dataconfig_editor)
         self.center.addWidget(self.suite_editor)
         self.center.addWidget(self.testplan_editor)
-        self.center.setCurrentWidget(self.welcome)
+        self.center.setCurrentWidget(self.welcome)   # 有工程时 __init__ 末尾改走空编辑区
         # 打开文件标签栏（多文件切换）：每个 tab 存该文件的内存模型，切换即重载入对应编辑器。
         # center(堆叠)仍是唯一编辑器载体，故其余逻辑对 self.center 的引用一律不变。
         self._tab_bar = QTabBar()
@@ -773,6 +778,7 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
         self._mirror_avf_active = False
         self._mirror_avf_retries = 0
         self._mirror_fallback_mjpeg = False
+        self._mirror_control_error = ""
         self._mirror_cancel = threading.Event()
         self.mirror.video_fallback = self._on_mirror_video_failed
         self.mirror._fail_is_handoff = lambda: getattr(self, "_mirror_control_pending", False)

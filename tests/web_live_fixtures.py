@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+
 import pytest
 
 from autopilot.keywords.context import ExecutionContext
@@ -13,12 +15,12 @@ from tests.web_live_support import open_live_ctx
 
 def _selenium_available() -> bool:
     try:
-        from selenium import webdriver
+        webdriver = importlib.import_module("selenium.webdriver")
+        exceptions = importlib.import_module("selenium.common.exceptions")
     except ImportError:
         return False
-    try:
-        from selenium.common.exceptions import WebDriverException
 
+    try:
         opts = webdriver.ChromeOptions()
         opts.add_argument("--headless=new")
         opts.add_argument("--no-sandbox")
@@ -26,26 +28,25 @@ def _selenium_available() -> bool:
         d = webdriver.Chrome(options=opts)
         d.quit()
         return True
-    except (OSError, WebDriverException):
+    except (OSError, exceptions.WebDriverException):
         return False
 
 
 def _playwright_available() -> bool:
     try:
-        from playwright.sync_api import sync_playwright
+        sync_api = importlib.import_module("playwright.sync_api")
     except ImportError:
         return False
-    try:
-        from playwright.sync_api import Error as PlaywrightError
 
-        p = sync_playwright().start()
+    try:
+        p = sync_api.sync_playwright().start()
         try:
             b = p.chromium.launch(headless=True)
             b.close()
         finally:
             p.stop()
         return True
-    except (OSError, PlaywrightError):
+    except (OSError, sync_api.Error):
         return False
 
 

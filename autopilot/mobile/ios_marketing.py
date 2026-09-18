@@ -1,12 +1,27 @@
 """iPhone ProductType → 市场型号映射（静态参考数据，非关键字）。
 
+Sources for cross-checking / extending:
+  - https://support.apple.com/zh-cn/108044  (Apple "Identify your iPhone")
+  - https://theapplewiki.com/wiki/Models/iPhone
+  - https://appledb.dev/device-selection/iPhone.html
+  - https://everymac.com/ultimate-mac-lookup/?identify=iPhone18,1
+
 供设备信息 UI、报告展示等复用；与 keywords 执行层解耦。
 """
 
 from __future__ import annotations
 
 MARKETING_NAMES: dict[str, str] = {
-    # iPhone 17 series (2025) — provisional / verify on real devices
+    # iPhone 18 generation (2026)
+    # 19,3 / 19,7 are iPhone 18 Pro Max variants with different basebands.
+    # Apple has registered iPhone19,1...19,7, but unconfirmed identifiers are
+    # intentionally omitted so a future device is not mislabeled.
+    "iPhone19,2": "iPhone 18 Pro",
+    "iPhone19,3": "iPhone 18 Pro Max",
+    "iPhone19,4": "iPhone Duo",
+    "iPhone19,7": "iPhone 18 Pro Max",
+
+    # iPhone 17 series (2025–2026)
     "iPhone18,1": "iPhone 17 Pro",
     "iPhone18,2": "iPhone 17 Pro Max",
     "iPhone18,3": "iPhone 17",

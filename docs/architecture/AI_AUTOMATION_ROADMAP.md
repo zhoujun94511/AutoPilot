@@ -31,6 +31,16 @@
 
 **链路 3 会话与门禁：** 会话驱动编写复用检视器已建立的会话（平台/设备一致时不重建 driver），自动完成选设备、解析包名、Android 启动 Activity 与 iOS Appium caps；单步失败只回退重规划，连续 3 次失败熔断。逐步执行成功的草稿记为已验证并允许上传批跑，仅规划草稿必须本地 F5；门禁结论写 `authored/_authoring.json`，上传工程时据此拦截。编写结束（成功/失败/关窗）按「自建关 driver、复用只软清理」回收资源，不把临时会话挂到检视器。配置见 [CONFIGURATION.md](../CONFIGURATION.md)。
 
+**Android/iOS 深层导航切片：** 对“购买四级页商品”这类目标，链路 3 不尝试读取尚未加载页面的控件，而是执行一层、稳定重采一层。内部使用 incident 驱动迁移的 `NavigationPlan`（搜索优先、分类兜底、滚动发现、目标动作、断言）、复合 `page_sig` 页面栈、待确认 transition 与 open/closed incident。无效/空采页或 `settlement_timeout` 不结算 pending；导航点击在下一次有效指纹确认变化后才进入最终路径。执行前 Safety Net 对规划指纹与 live tree 做短重试校验，并区分 `page_drift` / `locator_missing`。`mobile_presskey(oKeys=back)` 回到历史签名时按路径长度裁掉错误分支；仅同 frame、同方向与同尺度的探索滑动可归一化为 `mobile_slip_for_element`。
+
+**Web 双引擎深层导航：** Web 复用同一 `NavigationLedger`、复合 `page_sig`、pending transition、逐边重放和 target 后置语义确认；从 `start_url` 的 `web_browser_open` 建立确定起点，不继承检视器任意历史页。返回使用 `web_browser_back`，页面滚动保留 `web_browser_scroll_vertical_bar` 原始步骤，不套用移动端归一化。Authoring 只依赖 REGISTRY 与 WebDriver 鸭子接口，实际执行由 `BrowserManager` 选择 Selenium 或 Playwright adapter，不为特定站点分叉。
+
+**副作用安全：** 发生裁剪或归一化时，从确定入口（移动端 `mobile_app_start` / Web `web_browser_open`）逐边重放到 `target-ready`，每条已确认导航边都必须重新匹配其 `NavigationFrame.page_sig`；然后执行 terminal target 一次并稳定采集结果页，结果页语义未变化时不确认目标已生效。已执行的购买、提交、发送等 target 不得再次自动重放。“使用当前前台应用”无法恢复确定入口时，不执行待重放的 target，并保持不可上传，交由本地 F5 验证。明确要求“两次/重复”的业务动作按实际执行保留，不能在最终固化时去重。
+
+**IDE/Platform 线协议：** 企业链路 3 使用 `ai_codegen_wire.v1`。IDE 请求携带 `wire_contract_version=1.x`；Platform 的能力预检和 codegen 响应返回版本、`prompt_max_chars`、用途集合、内容字段和标准错误信封。缺少版本的旧 Platform 仍兼容，已声明但 major 不一致时双方 fail-closed，避免升级后编写到中途才因字段漂移断链。
+
+该切片借鉴 Artemis 的 plan grammar、Flash 逐屏感知循环和 execution incident，但**不引入** LangGraph、多 Agent 协议、坐标自由动作或新的运行时；执行仍只经过 REGISTRY、Intent 风险门禁并固化为传统 `.tc.yaml`。
+
 **明确不做（延续边界）：**
 
 - Platform 下发 xpath/定位器  

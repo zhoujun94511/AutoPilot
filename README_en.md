@@ -36,6 +36,23 @@ AutoPilot is a professional desktop IDE for test engineering teams. It unifies k
 
 ## Get started
 
+On a new machine, run the one-shot installer first (host JDK / Node / Appium and Python deps; skips download when `resources/` already has binaries). Flags and the full matrix: [setup overview](docs/SETUP.md).
+
+```powershell
+# Windows
+.\install_deps.bat
+# Check only: .\install_deps.bat -CheckOnly
+```
+
+```bash
+# Linux / macOS
+chmod +x scripts/install_deps.sh
+./scripts/install_deps.sh
+./scripts/install_deps.sh --check
+```
+
+Or install step by step:
+
 ### 1. Verify the execution core
 
 No browser or device required—about 30 seconds:

@@ -36,6 +36,23 @@ AutoPilot 是面向测试工程团队的专业桌面 IDE，以关键字驱动方
 
 ## 快速开始
 
+新电脑可先跑一键安装（宿主 JDK / Node / Appium 与 Python 依赖；仓库 `resources/` 已有二进制则跳过）。参数与矩阵见 [配置总览](docs/SETUP.md)。
+
+```powershell
+# Windows
+.\install_deps.bat
+# 只体检：.\install_deps.bat -CheckOnly
+```
+
+```bash
+# Linux / macOS
+chmod +x scripts/install_deps.sh
+./scripts/install_deps.sh
+./scripts/install_deps.sh --check
+```
+
+也可按下面逐步安装。
+
 ### 1. 验证执行内核
 
 无需浏览器或真机，约 30 秒确认环境可用：

@@ -4,6 +4,7 @@
 
 | 脚本 | 用途 |
 |------|------|
+| [`../install_deps.bat`](../install_deps.bat) / [`../scripts/install_deps.ps1`](../scripts/install_deps.ps1) / [`../scripts/install_deps.sh`](../scripts/install_deps.sh) | 新设备一键安装宿主 JDK/Node/Appium/Python；仓库 `resources/` 已有二进制则跳过 |
 | `preflight.py` | 依赖与工具链体检 |
 | `verify_realenv.py` | 真机 / 外部服务连通 |
 | `run_suite.py` | 无头批量执行 |

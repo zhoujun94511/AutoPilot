@@ -366,3 +366,105 @@ def expand_hint_keys(platform: str, hint: str) -> set[str]:
             keys.add(n)
     keys.update(pkg.lower() for pkg in entry.packages)
     return keys
+
+
+def expand_term_hints(hint: str) -> tuple[str, ...]:
+    """工程术语展开：WLAN → 无线局域网。未命中词表则只返回原 hint。"""
+    raw = (hint or "").strip()
+    if not raw:
+        return ()
+    key = _norm(raw)
+    out = [raw]
+    seen = {key}
+    for term in custom_terms():
+        names = (term.meaning,) + term.aliases
+        if key not in {_norm(n) for n in names if n}:
+            continue
+        for name in names:
+            item = (name or "").strip()
+            nk = _norm(item)
+            if not nk or nk in seen:
+                continue
+            seen.add(nk)
+            out.append(item)
+    return tuple(out)
+
+
+@dataclass(frozen=True)
+class TermAlias:
+    """工程词表：口语说法 → 页面/控件含义。不参与包名解析。"""
+
+    meaning: str
+    aliases: tuple[str, ...]
+
+
+@lru_cache(maxsize=8)
+def _load_custom_terms(path: str) -> tuple[TermAlias, ...]:
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return ()
+    rows = raw.get("terms") if isinstance(raw, dict) else None
+    if not isinstance(rows, list):
+        return ()
+    out: list[TermAlias] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        meaning = str(row.get("meaning") or row.get("means") or "").strip()
+        aliases = tuple(str(x).strip() for x in row.get("aliases", []) if str(x).strip())
+        if meaning and aliases:
+            out.append(TermAlias(meaning, aliases))
+    return tuple(out)
+
+
+def custom_terms() -> tuple[TermAlias, ...]:
+    path = (os.environ.get("AUTOPILOT_AUTHORING_APP_ALIASES_FILE") or "").strip()
+    if not path:
+        return ()
+    return _load_custom_terms(path)
+
+
+def clear_alias_caches() -> None:
+    _load_custom_entries.cache_clear()
+    _load_custom_terms.cache_clear()
+
+
+def prompt_definitions(
+    platform: str,
+    *,
+    hint: str = "",
+    package_name: str = "",
+    max_items: int = 16,
+) -> str:
+    """写入 Prompt 的已知定义：当前应用别名 + 企业应用 + 工程术语。
+
+    不倾倒内置热门目录。harness 不根据这些词分支。
+    """
+    plat = (platform or "").strip().lower()
+    lines: list[str] = []
+    seen: set[str] = set()
+
+    def _add(line: str) -> None:
+        key = _norm(line)
+        if not key or key in seen or len(lines) >= max(1, int(max_items)):
+            return
+        seen.add(key)
+        lines.append(line)
+
+    pkg = (package_name or "").strip()
+    if pkg:
+        names = aliases_for_package(plat, pkg)
+        if names:
+            _add(f"{' / '.join(names[:4])} = {pkg}")
+        else:
+            _add(f"目标应用 = {pkg}")
+    entry = alias_entry(plat, hint) if hint else None
+    if entry is not None:
+        _add(f"{' / '.join(entry.aliases[:4])} = {entry.packages[0]}")
+
+    for item in _custom_entries().get(plat, ()):
+        _add(f"{' / '.join(item.aliases[:3])} = {item.packages[0]}")
+    for term in custom_terms():
+        _add(f"{' / '.join(term.aliases[:4])} = {term.meaning}")
+    return "\n".join(f"- {line}" for line in lines)

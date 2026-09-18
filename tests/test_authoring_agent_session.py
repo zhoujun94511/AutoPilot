@@ -178,3 +178,32 @@ def test_session_requires_ctx():
             ctx=None,
             save=False,
         )
+
+
+def test_session_authoring_stops_before_llm(monkeypatch):
+    import threading
+
+    from autopilot.authoring.agent import run_session_authoring
+
+    ids = {"mobile_app_start", "mobile_element_click"}
+    _patch_catalog(monkeypatch, ids)
+    _patch_captures(monkeypatch, '[{"t":"Button","tx":"确定","l":"name::ok","ck":1}]')
+    chats: list[str] = []
+    cancel = threading.Event()
+    cancel.set()
+    draft = run_session_authoring(
+        AuthoringRequest(
+            natural_language="打开演示应用并点击确定",
+            platform="ios",
+            mode="session",
+            package_name="com.example.demo",
+        ),
+        ctx=_FakeCtx(),
+        chat=lambda p: chats.append(p) or "{}",
+        executor=lambda _step, _ctx: None,
+        cancel_event=cancel,
+    )
+    assert chats == []
+    assert draft.steps == []
+    assert draft.goal_completed is False
+    assert any("已停止" in w for w in draft.warnings)

@@ -156,12 +156,23 @@ def test_jsonschema_mirrors_platform_byte_identical():
         "logical_case.v1.json",
         "result.v1.json",
         "step_binding.v1.json",
+        "ai_codegen_wire.v1.json",
     }
     ide_names = {
         p.name
         for p in (ide_root / "contracts" / "jsonschema").glob("*.json")
     }
     assert expected <= ide_names
+
+
+def test_ai_codegen_wire_semantics_match_platform():
+    ide_root = Path(__file__).resolve().parents[1]
+    platform_root = ide_root.parent / "Autopilot-Platform"
+    if not (platform_root / "autopilot_platform" / "platform").is_dir():
+        return
+    from tools.check_dual_repo_contract import check_ai_codegen_wire_semantics
+
+    check_ai_codegen_wire_semantics(ide_root, platform_root)
 
 
 def test_dual_repo_contract_checker_when_platform_present():

@@ -7,7 +7,7 @@ import os
 import re
 from typing import Any, Callable
 
-from ..intent.config import vision_api_key, vision_base_url, vision_model, vision_timeout_sec
+from ..intent.config import vision_api_key, vision_base_url, vision_timeout_sec
 from ..runtime.log import get_logger
 from .contract import AuthoringError
 
@@ -17,10 +17,21 @@ ChatFn = Callable[[str], str]
 
 #: 单次 prompt 上限（与 Platform ``MAX_AI_PROMPT_CHARS`` 对齐），本地先拦以省一次往返
 MAX_PROMPT_CHARS = 60000
+AI_CODEGEN_WIRE_MAJOR = "1"
 #: 未接管理台又没有本机 Key 时的统一提示。环境变量名只在日志里出现，
 #: 界面上给用户能执行的动作（登录 / 找管理员）。
 NO_LOCAL_KEY_MESSAGE = "AI 服务尚未就绪：请登录管理台，或联系管理员开通 AI 能力。"
 _LAST_PLATFORM_CAPABILITIES: dict[str, Any] = {}
+
+
+def validate_platform_wire_contract(payload: dict[str, Any]) -> None:
+    """兼容未声明版本的旧平台；拒绝已声明但 major 不兼容的新协议。"""
+    version = str(payload.get("wire_contract_version") or "").strip()
+    if version and version.split(".", 1)[0] != AI_CODEGEN_WIRE_MAJOR:
+        raise AuthoringError(
+            "IDE 与 Platform 的 AI 编写协议不兼容："
+            f"IDE={AI_CODEGEN_WIRE_MAJOR}.x，Platform={version}"
+        )
 
 
 def platform_llm_capabilities() -> dict[str, Any]:
@@ -47,6 +58,7 @@ def platform_llm_capabilities() -> dict[str, Any]:
         raise AuthoringError(f"平台 AI 能力预检异常：{exc}") from exc
     if not isinstance(out, dict):
         raise AuthoringError("平台 AI 能力预检返回格式异常")
+    validate_platform_wire_contract(out)
     if not bool(out.get("enabled")):
         raise AuthoringError("管理台尚未开通 AI 能力，请联系管理员配置后再试。")
     _LAST_PLATFORM_CAPABILITIES.clear()
@@ -146,8 +158,10 @@ def model_for_purpose(purpose: str | None = "authoring") -> str:
 
     - ``AP_AI_LOCATE_MODEL`` / ``AUTOPILOT_AUTHORING_LOCATE_MODEL``
     - ``AP_AI_PLANNING_MODEL`` / ``AUTOPILOT_AUTHORING_PLANNING_MODEL``
-    未配置时回落 ``vision_model()``（与 AP_AI_MODEL 同源）。
+    未配置时回落 ``chat_model()``（纯文本 Chat，不含 Vision 识图回落）。
     """
+    from ..intent.config import chat_model
+
     kind = normalize_llm_purpose(purpose)
     if kind == "locate":
         for key in ("AP_AI_LOCATE_MODEL", "AUTOPILOT_AUTHORING_LOCATE_MODEL"):
@@ -159,7 +173,7 @@ def model_for_purpose(purpose: str | None = "authoring") -> str:
             val = (os.environ.get(key) or "").strip()
             if val:
                 return val
-    return vision_model()
+    return chat_model()
 
 
 def chat_local(prompt: str, *, purpose: str = "authoring") -> str:
@@ -192,7 +206,16 @@ def chat_local(prompt: str, *, purpose: str = "authoring") -> str:
             {"role": "user", "content": prompt},
         ],
     }
-    apply_max_output_tokens(body, model, 2000)
+    raw_max_tokens = (
+        os.environ.get("AP_AI_CODEGEN_MAX_TOKENS")
+        or os.environ.get("AP_AI_MAX_TOKENS")
+        or "4096"
+    )
+    try:
+        max_tokens = max(512, min(8192, int(raw_max_tokens)))
+    except ValueError:
+        max_tokens = 4096
+    apply_max_output_tokens(body, model, max_tokens)
     apply_reasoning_to_body(
         body,
         provider=provider,
@@ -256,8 +279,10 @@ def chat_platform(prompt: str, *, purpose: str = "authoring") -> str:
         raise AuthoringError(f"AI 服务调用失败：{exc}") from exc
     if not isinstance(out, dict):
         raise AuthoringError("AI 服务返回格式异常")
+    validate_platform_wire_contract(out)
     capabilities = out.get("capabilities")
     if isinstance(capabilities, dict):
+        validate_platform_wire_contract(capabilities)
         _LAST_PLATFORM_CAPABILITIES.clear()
         _LAST_PLATFORM_CAPABILITIES.update(capabilities)
     content = out.get("content") or out.get("text") or ""

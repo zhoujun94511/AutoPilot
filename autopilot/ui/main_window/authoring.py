@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...runtime import settings
+from ..platform_labels import default_authoring_platform
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -29,9 +30,9 @@ class AuthoringMixin(_Base):
         default_plat = "auto"
         if proj:
             try:
-                p = (settings.project_platform(proj) or "").strip().lower()
-                if p in ("android", "ios", "web"):
-                    default_plat = p
+                default_plat = default_authoring_platform(
+                    settings.project_platform(proj) or ""
+                )
             except (ImportError, OSError, AttributeError, TypeError, RuntimeError):
                 default_plat = "auto"
 

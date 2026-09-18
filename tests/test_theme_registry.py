@@ -69,12 +69,35 @@ def test_unknown_theme_name_fails_fast():
 def test_key_surfaces_have_dedicated_styles(theme):
     welcome = panel_stylesheet("welcome_panel", theme)
     authoring = panel_stylesheet("ai_authoring_dialog", theme)
+    empty = panel_stylesheet("empty_state", theme)
 
     assert "QWidget#welcome_panel" in welcome
     assert "QFrame#welcome_card" in welcome
+    assert "QWidget#empty_workspace" in empty
+    assert "QPushButton#empty_workspace_action" not in empty
+    assert "QPushButton#dialog_btn_danger" in panel_stylesheet("dialog_button_bar", theme)
+    assert "QDialog#confirm_dialog" in panel_stylesheet("confirm_dialog", theme)
     assert "QDialog#ai_authoring_dialog" in authoring
     assert "QTableWidget#authoring_steps" in authoring
     assert "QLabel#authoring_status" in authoring
+    assert 'QLabel#authoring_badge[badge_kind="done"]' in authoring
+    assert "QPushButton#authoring_stop" in authoring
+    assert "QPushButton#authoring_stop:disabled" in authoring
+    assert "QPushButton#primary_action:disabled" in authoring
+    assert "QToolButton#authoring_advanced" in authoring
+    assert "QScrollArea#authoring_advanced_scroll" in authoring
+
+
+def test_authoring_inputs_have_readable_min_height():
+    """高级选项首次展开前 QSS padding 会把未 polish 的输入框挤扁。"""
+    for theme in (THEME_LIGHT, THEME_DARK):
+        qss = panel_stylesheet("ai_authoring_dialog", theme)
+        input_rule = qss.split("QDialog#ai_authoring_dialog QLineEdit,", 1)[1].split("}", 1)[0]
+        assert "min-height:" in input_rule
+        check_rule = qss.split("QDialog#ai_authoring_dialog QCheckBox", 1)[1].split("}", 1)[0]
+        assert "min-height:" in check_rule
+        pt_rule = qss.split("QDialog#ai_authoring_dialog QPlainTextEdit {", 1)[1].split("}", 1)[0]
+        assert "min-height: 28px" not in pt_rule
 
 
 def test_authoring_spinbox_keeps_native_arrows():
@@ -102,6 +125,8 @@ def test_registered_names_cover_key_surfaces():
         "ai_authoring_dialog",
         "login_gate",
         "dialog_form",
+        "dialog_button_bar",
+        "confirm_dialog",
         "about_dialog",
     ):
         assert required in names

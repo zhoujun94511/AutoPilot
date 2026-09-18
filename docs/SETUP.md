@@ -41,9 +41,23 @@
 
 ## 2. 公共环境
 
-### 2.0 环境预检 (preflight)
+### 2.0 新设备一键安装 + 环境预检
 
-任何时候都可一键体检环境是否就位（离线、不连真机/真服务）：
+新电脑第一次配 Android/iOS 宿主工具（JDK、Node、Appium、Python venv）时，用仓库根的安装脚本。本仓库 `resources/` 已有的 `re_adb` / `re_go_ios` / `re_scrcpy` / `re_aapt` / `re_uiautomator` 会跳过下载。
+
+```bat
+install_deps.bat
+```
+
+```bash
+# macOS / Linux
+chmod +x scripts/install_deps.sh
+./scripts/install_deps.sh
+```
+
+常用参数：`--check` / `-CheckOnly` 只体检；`--skip-appium` 跳过 Node/Appium（Win/Linux 上纯 iOS WDA-direct）；`--playwright` 额外装 Chromium；`--all-python` 装 data/secure/web_playwright。
+
+装完再体检（离线、不连真机/真服务）：
 
 ```bash
 .venv/Scripts/python.exe tools/preflight.py
@@ -64,7 +78,7 @@
 .venv/Scripts/python.exe tools/preflight.py --install-drivers         # 装宿主侧 Appium 驱动(uiautomator2)
 ```
 
-> 真机 / 真服务的**连通性**验证（adb 设备、Redis/SSH/DB…）用另一脚本：`tools/verify_realenv.py`。preflight 管「装没装齐」，verify_realenv 管「连不连得上」。Platform 仓同类脚本见兄弟仓 `Autopilot-Platform/tools/preflight.py`（支持 `--role platform|runner`）。
+> 真机 / 真服务的**连通性**验证（adb 设备、Redis/SSH/DB…）用另一脚本：`tools/verify_realenv.py`。preflight 管「装没装齐」，verify_realenv 管「连不连得上」。
 
 ### 2.1 Python 与虚拟环境
 

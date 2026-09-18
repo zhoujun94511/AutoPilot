@@ -131,9 +131,11 @@ class DeviceMixin(_Base):
         # 设备拔出处理（按「具体设备」判定，多台不误停）——但加去抖：设备在 uiautomator2
         # 初始化等场景会瞬时掉线再恢复，若一格没看到就拆会话，会反复打断刚建的 Appium/WDA。
         # 故缺席需「持续超过宽限期」才判真断开（其间恢复则取消），见 _watch_device_gone。
+        mirror_active = self.mirror.active()
+        mirror_pending = bool(getattr(self, "_mirror_control_pending", False))
         self._watch_device_gone(
             "mirror",
-            self.mirror.platform_name() if self.mirror.active() else "",
+            self.mirror.platform_name() if mirror_active else ("ios" if mirror_pending else ""),
             getattr(self, "_mirror_udid", ""),
             self._on_mirror_device_gone)
         self._watch_device_gone(

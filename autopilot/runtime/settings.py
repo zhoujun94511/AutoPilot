@@ -109,6 +109,13 @@ def last_project() -> str:
     return os.path.normpath(p)
 
 
+def forget_last_project() -> None:
+    """关闭工程：忘掉上次工程，最近列表保留。下次启动回到无工程欢迎页。"""
+    data = load()
+    data["last_project"] = ""
+    save(data)
+
+
 # 「常用关键字」热度：带时间衰减的累计分。半衰期内高频用的排前，长期不用自然沉底；
 # 存储裁到上限，避免无限增长。存储项为 {"count": 分, "ts": 最后使用 epoch}；兼容旧的裸 int。
 _USAGE_CAP = 50

@@ -1,35 +1,35 @@
 """统一的「是/否」确认弹框。
 
-Qt 的 QMessageBox 标准按钮(Yes/No/Ok/Cancel)用系统英文文案，与中文界面混用很违和。
-这里用自定义按钮文案(默认「确定」/「取消」)统一收口，所有确认操作都走 confirm()，
-点「确定」返回 True，「取消」或关闭返回 False。
+不再使用 QMessageBox：Windows 系统按钮 + 全局 QPushButton QSS 会挤成细边框。
+所有确认操作走 confirm() / confirm_tri()，内部是 ConfirmDialog + DialogButtonBar。
+点主按钮返回确认，「取消」或关闭返回取消。
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtWidgets import QMessageBox, QWidget
+from PyQt6.QtWidgets import QDialog, QWidget
 
-from .branding import app_icon
+from .widgets.confirm_dialog import ConfirmDialog
 
 
 def confirm(parent: Optional[QWidget], title: str, text: str, *,
             danger: bool = False, yes_text: str = "确定", no_text: str = "取消") -> bool:
     """弹确认框；用户确认返回 True，否则 False。
 
-    danger=True：用警告图标，且默认焦点落在「取消」（防误删等破坏性操作手滑回车）。
+    danger=True：警告图标 + 红色描边主按钮，默认焦点落在「取消」（防误删回车）。
     """
-    box = QMessageBox(parent)
-    box.setWindowTitle(title)
-    box.setText(text)
-    box.setWindowIcon(app_icon())
-    box.setIcon(QMessageBox.Icon.Warning if danger else QMessageBox.Icon.Question)
-    yes = box.addButton(yes_text, QMessageBox.ButtonRole.AcceptRole)
-    no = box.addButton(no_text, QMessageBox.ButtonRole.RejectRole)
-    box.setDefaultButton(no if danger else yes)
-    box.exec()
-    return box.clickedButton() is yes
+    dlg = ConfirmDialog(
+        parent,
+        title,
+        text,
+        danger=danger,
+        yes_text=yes_text,
+        cancel_text=no_text,
+        default="cancel" if danger else "yes",
+    )
+    return dlg.exec() == QDialog.DialogCode.Accepted
 
 
 def confirm_tri(
@@ -44,27 +44,18 @@ def confirm_tri(
     danger: bool = False,
 ) -> str:
     """三按钮确认。返回 ``yes`` / ``no`` / ``cancel``（关闭窗口视为 cancel）。"""
-    box = QMessageBox(parent)
-    box.setWindowTitle(title)
-    box.setText(text)
-    box.setWindowIcon(app_icon())
-    box.setIcon(QMessageBox.Icon.Warning if danger else QMessageBox.Icon.Question)
-    yes = box.addButton(yes_text, QMessageBox.ButtonRole.AcceptRole)
-    no = box.addButton(no_text, QMessageBox.ButtonRole.ActionRole)
-    cancel = box.addButton(cancel_text, QMessageBox.ButtonRole.RejectRole)
-    if default == "no":
-        box.setDefaultButton(no)
-    elif default == "cancel":
-        box.setDefaultButton(cancel)
-    else:
-        box.setDefaultButton(yes)
-    box.exec()
-    clicked = box.clickedButton()
-    if clicked is yes:
-        return "yes"
-    if clicked is no:
-        return "no"
-    return "cancel"
+    dlg = ConfirmDialog(
+        parent,
+        title,
+        text,
+        danger=danger,
+        yes_text=yes_text,
+        no_text=no_text,
+        cancel_text=cancel_text,
+        default=default if default in ("yes", "no", "cancel") else "yes",
+    )
+    dlg.exec()
+    return dlg.choice
 
 
 def ask_local_runner_prompt(parent: Optional[QWidget], prompt) -> str:

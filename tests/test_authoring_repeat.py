@@ -126,15 +126,27 @@ def test_session_same_click_stops(tmp_path: Path, monkeypatch):
     assert result.draft.goal_completed is False
 
 
-def test_heuristic_judge_does_not_flip_completed():
+def test_heuristic_judge_requires_evidence_not_just_done():
     recorded = [GeneratedStep(keyword_id="mobile_element_click", comment="点")]
     note = heuristic_goal_judge(
         goal_completed=True,
         recorded=recorded,
-        warnings=["同一操作在未变化的页面上连续 6 次，停止编写"],
+        warnings=[],
     )
-    assert note["passed"] is True
+    assert note["passed"] is False
     assert note["source"] == "heuristic"
+
+
+def test_heuristic_judge_repeat_melt_fails_even_with_target():
+    recorded = [GeneratedStep(keyword_id="mobile_element_click", comment="点")]
+    note = heuristic_goal_judge(
+        goal_completed=True,
+        recorded=recorded,
+        warnings=["重复操作熔断：同一操作在未变化的页面上连续 6 次"],
+        target_confirmed=True,
+    )
+    assert note["passed"] is False
+    assert "重复操作" in note["reason"]
 
 
 def test_judge_off_returns_empty(monkeypatch):

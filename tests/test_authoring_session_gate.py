@@ -30,10 +30,20 @@ def _write_case(root: Path, name: str = "a.tc.yaml") -> Path:
 
 def test_session_verified_draft_allows_upload(tmp_path: Path):
     path = _write_case(tmp_path)
-    gate = assert_local_dry_run_passed(path, session_verified=True)
+    gate = assert_local_dry_run_passed(
+        path, session_verified=True, goal_completed=True
+    )
     assert gate.ok is True
     assert gate.allow_upload is True
     assert gate.verified_by == "session"
+
+
+def test_session_verified_without_goal_blocks_upload(tmp_path: Path):
+    path = _write_case(tmp_path)
+    gate = assert_local_dry_run_passed(path, session_verified=True)
+    assert gate.ok is True
+    assert gate.allow_upload is False
+    assert "goal_incomplete" in gate.details
 
 
 def test_plan_only_draft_needs_local_run(tmp_path: Path):
@@ -48,7 +58,10 @@ def test_gate_record_drives_project_upload_block(tmp_path: Path):
     assert unverified_drafts(tmp_path) == ["a.tc.yaml"]
     assert "a.tc.yaml" in project_upload_blocked_reason(tmp_path)
 
-    record_gate_result(path, assert_local_dry_run_passed(path, session_verified=True))
+    record_gate_result(
+        path,
+        assert_local_dry_run_passed(path, session_verified=True, goal_completed=True),
+    )
     assert unverified_drafts(tmp_path) == []
     assert project_upload_blocked_reason(tmp_path) == ""
 
@@ -144,11 +157,83 @@ def test_multi_device_cancel_aborts(monkeypatch):
 
 
 def test_multi_device_without_callback_takes_first(monkeypatch):
-    """CLI / 无人值守没有回调，仍要能跑。"""
+    """CLI 无回调且非无人值守：兼容旧脚本，取第一台 ready。"""
     from autopilot.authoring import session_bootstrap as sb
 
     _patch_ios_devices(monkeypatch, [_Dev("UDID-1"), _Dev("UDID-2")])
     assert sb._pick_udid("ios") == "UDID-1"
+
+
+def test_unattended_multi_device_requires_udid(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    _patch_ios_devices(monkeypatch, [_Dev("UDID-1"), _Dev("UDID-2")])
+    asked: list[list[str]] = []
+    with pytest.raises(AuthoringError, match="AUTOPILOT_AUTHORING_DEVICE_UDID"):
+        sb._pick_udid(
+            "ios",
+            pick_device=lambda _platform, udids: asked.append(list(udids)) or "UDID-2",
+        )
+    assert asked == []
+
+
+def test_unattended_uses_env_udid_and_skips_picker(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_DEVICE_UDID", "UDID-2")
+    _patch_ios_devices(monkeypatch, [_Dev("UDID-1"), _Dev("UDID-2")])
+    asked: list[list[str]] = []
+    assert (
+        sb._pick_udid(
+            "ios",
+            pick_device=lambda _platform, udids: asked.append(list(udids)) or "UDID-1",
+        )
+        == "UDID-2"
+    )
+    assert asked == []
+    assert sb.preferred_authoring_udid("EXPLICIT") == "EXPLICIT"
+
+
+def test_unattended_single_device_ok_without_udid(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    _patch_ios_devices(monkeypatch, [_Dev("UDID-1")])
+    assert sb._pick_udid("ios") == "UDID-1"
+
+
+def test_authoring_unattended_env_flags(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.delenv("AUTOPILOT_AUTHORING_UNATTENDED", raising=False)
+    assert sb.authoring_unattended() is False
+    for raw in ("1", "true", "YES", "on"):
+        monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", raw)
+        assert sb.authoring_unattended() is True
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "0")
+    assert sb.authoring_unattended() is False
+
+
+def test_unattended_env_udid_must_be_online(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_DEVICE_UDID", "UDID-MISSING")
+    _patch_ios_devices(monkeypatch, [_Dev("UDID-1"), _Dev("UDID-2")])
+    with pytest.raises(AuthoringError, match="指定设备不在线"):
+        sb._pick_udid("ios")
+
+
+def test_preferred_authoring_udid_falls_back_to_env(monkeypatch):
+    from autopilot.authoring import session_bootstrap as sb
+
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_DEVICE_UDID", "UDID-ENV")
+    assert sb.preferred_authoring_udid("") == "UDID-ENV"
+    assert sb.preferred_authoring_udid("  ") == "UDID-ENV"
+    monkeypatch.delenv("AUTOPILOT_AUTHORING_DEVICE_UDID", raising=False)
+    assert sb.preferred_authoring_udid("") == ""
 
 
 def test_no_ios_device_message_reports_tooling_error(monkeypatch):
@@ -215,7 +300,16 @@ def test_step_failure_degrades_to_replan(monkeypatch):
         "autopilot.authoring.codegen.allowed_keyword_ids",
         lambda platform: {"mobile_element_text_input", "mobile_element_click"},
     )
-    monkeypatch.setattr(ag, "capture_ui_context", lambda ctx, platform: {"elements_text": "[]"})
+    state = {"done": False}
+    cap = lambda ctx, platform, **kw: {  # noqa: E731
+        "elements_text": (
+            '[{"l":"id=result","tx":"完成"}]'
+            if state["done"]
+            else '[{"l":"id=q"}]'
+        )
+    }
+    monkeypatch.setattr(ag, "capture_ui_context", cap)
+    monkeypatch.setattr(ag, "capture_settled_ui_context", cap)
 
     attempts: list[str] = []
 
@@ -223,6 +317,7 @@ def test_step_failure_degrades_to_replan(monkeypatch):
         attempts.append(step.keyword_id)
         if step.keyword_id == "mobile_element_text_input":
             raise AuthoringError("控件未找到")
+        state["done"] = True
 
     chat = _FakeChat([_turn("mobile_element_text_input"), _turn("mobile_element_click", done=True)])
     draft = run_session_authoring(
@@ -250,7 +345,9 @@ def test_consecutive_failures_stop_authoring(monkeypatch):
         "autopilot.authoring.codegen.allowed_keyword_ids",
         lambda platform: {"mobile_element_click"},
     )
-    monkeypatch.setattr(ag, "capture_ui_context", lambda ctx, platform: {"elements_text": "[]"})
+    cap = lambda ctx, platform: {"elements_text": "[]"}  # noqa: E731
+    monkeypatch.setattr(ag, "capture_ui_context", cap)
+    monkeypatch.setattr(ag, "capture_settled_ui_context", cap)
 
     def executor(_step, _ctx):
         raise AuthoringError("控件未找到")
@@ -288,12 +385,20 @@ def test_authoring_llm_calls_capped_per_case(monkeypatch):
         "autopilot.authoring.codegen.allowed_keyword_ids",
         lambda platform: {"mobile_element_click"},
     )
+    state = {"version": 0}
+
     def capture(_ctx, _platform):
-        return {"elements_text": "[]"}
+        return {
+            "elements_text": (
+                f'[{{"l":"id=q","tx":"state-{state["version"]}"}}]'
+            )
+        }
     monkeypatch.setattr(ag, "capture_ui_context", capture)
     monkeypatch.setattr(ag, "capture_settled_ui_context", capture)
 
-    chat = _FakeChat([_turn("mobile_element_click")])
+    payload = json.loads(_turn("mobile_element_click"))
+    payload["steps"][0]["action_role"] = "target"
+    chat = _FakeChat([json.dumps(payload)])
     draft = run_session_authoring(
         AuthoringRequest(
             natural_language="连续操作",
@@ -303,7 +408,9 @@ def test_authoring_llm_calls_capped_per_case(monkeypatch):
         ),
         ctx=ExecutionContext(),
         chat=chat,
-        executor=lambda _step, _ctx: None,
+        executor=lambda _step, _ctx: state.__setitem__(
+            "version", state["version"] + 1
+        ),
     )
     assert chat.calls == 2
     assert any("AI 调用上限 2" in warning for warning in draft.warnings)
@@ -333,14 +440,20 @@ def test_page_changing_step_ends_turn(monkeypatch):
     from autopilot.authoring import agent as ag
 
     ids = ["mobile_element_click"]
-    els = (
-        '[{"l":"name::a"},{"l":"name::b"},{"l":"name::c"},{"l":"name::d"}]'
-    )
     monkeypatch.setattr(ag, "build_keyword_catalog", lambda platform: [{"id": i} for i in ids])
     monkeypatch.setattr(
         "autopilot.authoring.codegen.allowed_keyword_ids", lambda platform: set(ids)
     )
-    cap = lambda ctx, platform, **kw: {"elements_text": els}  # noqa: E731
+    state = {"page": "a"}
+
+    def cap(_ctx, _platform, **_kw):
+        suffix = state["page"]
+        return {"elements_text": f'[{{"l":"name::{suffix}"}},{{"l":"name::c"}}]'}
+
+    def execute(step, _ctx):
+        if step.params.get("locator") == "name::a":
+            state["page"] = "b"
+
     monkeypatch.setattr(ag, "capture_ui_context", cap)
     monkeypatch.setattr(ag, "capture_settled_ui_context", cap)
 
@@ -365,7 +478,7 @@ def test_page_changing_step_ends_turn(monkeypatch):
         AuthoringRequest(natural_language="连续点击", platform="ios", mode="session"),
         ctx=ExecutionContext(),
         chat=chat,
-        executor=lambda _step, _ctx: None,
+        executor=execute,
     )
     assert chat.calls == 2
     assert [s.params["locator"] for s in draft.steps] == ["name::a", "name::c"]
@@ -410,7 +523,11 @@ def test_same_page_inputs_can_batch(monkeypatch):
     assert len(draft.steps) == 2
 
 
-def _patch_agent_env(monkeypatch, ids: list[str], elements_text: str = "[]"):
+def _patch_agent_env(
+    monkeypatch,
+    ids: list[str],
+    elements_text: str = '[{"l":"name::go"}]',
+):
     from autopilot.authoring import agent as ag
 
     monkeypatch.setattr(ag, "build_keyword_catalog", lambda platform: [{"id": i} for i in ids])
@@ -444,6 +561,22 @@ def test_repeated_entry_step_is_skipped(monkeypatch):
         "steps": [{"keyword_id": "mobile_element_click", "params": {"locator": "name::go"}}],
     }
     chat = _FakeChat([json.dumps(start), json.dumps(finish)])
+    state = {"done": False}
+
+    def capture(_ctx, _platform):
+        elements = (
+            '[{"l":"name::done","tx":"完成"}]'
+            if state["done"]
+            else '[{"l":"name::go"}]'
+        )
+        return {"element_count": 1, "elements_text": elements}
+
+    def execute(step, _ctx):
+        if step.keyword_id == "mobile_element_click":
+            state["done"] = True
+
+    monkeypatch.setattr("autopilot.authoring.agent.capture_ui_context", capture)
+    monkeypatch.setattr("autopilot.authoring.agent.capture_settled_ui_context", capture)
     draft = run_session_authoring(
         AuthoringRequest(
             natural_language="打开应用并搜索",
@@ -453,7 +586,7 @@ def test_repeated_entry_step_is_skipped(monkeypatch):
         ),
         ctx=ExecutionContext(),
         chat=chat,
-        executor=lambda _step, _ctx: None,
+        executor=execute,
     )
     # 入口由 bootstrap 执行过一次，模型的重复启动被丢弃
     assert [s.keyword_id for s in draft.steps] == ["mobile_app_start", "mobile_element_click"]
@@ -487,7 +620,7 @@ def test_observe_only_step_not_recorded(monkeypatch):
 
 
 def test_snapshot_kept_when_user_asks(monkeypatch):
-    ag = _patch_agent_env(monkeypatch, ["mobile_app_snapshot", "mobile_element_click"])
+    _patch_agent_env(monkeypatch, ["mobile_app_snapshot", "mobile_element_click"])
     payload = {
         "done": True,
         "title": "截图留证",
@@ -533,6 +666,21 @@ def test_locator_outside_page_summary_rejected(monkeypatch):
 def test_cross_app_second_entry_allowed(monkeypatch):
     """跨包名入口应允许再次 mobile_app_start，不能一律幂等拦截。"""
     ag = _patch_agent_env(monkeypatch, ["mobile_app_start", "mobile_element_click"])
+    state = {"package": "com.demo"}
+
+    def cap(_ctx, _platform, **_kw):
+        return {
+            "elements_text": json.dumps([
+                {"l": "name::go", "tx": state["package"]}
+            ])
+        }
+
+    def execute(step, _ctx):
+        if step.keyword_id == "mobile_app_start":
+            state["package"] = step.params.get("packageName") or state["package"]
+
+    monkeypatch.setattr(ag, "capture_ui_context", cap)
+    monkeypatch.setattr(ag, "capture_settled_ui_context", cap)
     payloads = [
         {
             "done": False,
@@ -564,7 +712,7 @@ def test_cross_app_second_entry_allowed(monkeypatch):
         ),
         ctx=ExecutionContext(),
         chat=_FakeChat([json.dumps(p) for p in payloads]),
-        executor=lambda _step, _ctx: None,
+        executor=execute,
     )
     kids = [s.keyword_id for s in draft.steps]
     assert kids.count("mobile_app_start") == 2
@@ -578,8 +726,24 @@ def test_turn_exhausted_draft_is_not_upload_ready(monkeypatch, tmp_path: Path):
     _patch_agent_env(monkeypatch, ["mobile_element_click"])
     payload = {
         "done": False,
-        "steps": [{"keyword_id": "mobile_element_click", "params": {"locator": "name::go"}}],
+        "steps": [{
+            "keyword_id": "mobile_element_click",
+            "params": {"locator": "name::go"},
+            "action_role": "target",
+        }],
     }
+    state = {"version": 0}
+
+    def capture(_ctx, _platform):
+        return {
+            "element_count": 1,
+            "elements_text": (
+                f'[{{"l":"name::go","tx":"state-{state["version"]}"}}]'
+            ),
+        }
+
+    monkeypatch.setattr("autopilot.authoring.agent.capture_ui_context", capture)
+    monkeypatch.setattr("autopilot.authoring.agent.capture_settled_ui_context", capture)
     draft = run_session_authoring(
         AuthoringRequest(
             natural_language="点搜索",
@@ -590,7 +754,9 @@ def test_turn_exhausted_draft_is_not_upload_ready(monkeypatch, tmp_path: Path):
         ),
         ctx=ExecutionContext(),
         chat=_FakeChat([json.dumps(payload)]),
-        executor=lambda _step, _ctx: None,
+        executor=lambda _step, _ctx: state.__setitem__(
+            "version", state["version"] + 1
+        ),
     )
     assert draft.session_verified is True
     assert draft.goal_completed is False
@@ -605,6 +771,48 @@ def test_turn_exhausted_draft_is_not_upload_ready(monkeypatch, tmp_path: Path):
     assert gate.allow_upload is False
     assert gate.verified_by == ""
     assert "goal_incomplete" in gate.details
+
+
+def test_terminal_visibility_assert_is_normalized_and_completes_goal(monkeypatch):
+    elements = '[{"l":"name::General","tx":"General"}]'
+    _patch_agent_env(
+        monkeypatch,
+        ["mobile_wait_element_visible", "mobile_verify_element_visible"],
+        elements_text=elements,
+    )
+    payload = {
+        "done": True,
+        "title": "打开通用设置",
+        "steps": [
+            {
+                "keyword_id": "mobile_wait_element_visible",
+                "params": {
+                    "locator": "name::General",
+                    "isVisible": "true",
+                    "timeout": "30000",
+                },
+                "action_role": "assert",
+            }
+        ],
+    }
+
+    draft = run_session_authoring(
+        AuthoringRequest(
+            natural_language="打开 General 并验证页面已显示",
+            platform="ios",
+            mode="session",
+        ),
+        ctx=ExecutionContext(),
+        chat=_FakeChat([json.dumps(payload)]),
+        executor=lambda _step, _ctx: None,
+    )
+
+    assert [step.keyword_id for step in draft.steps] == [
+        "mobile_verify_element_visible"
+    ]
+    assert draft.session_verified is True
+    assert draft.goal_completed is True
+    assert not any("尚无断言步骤" in warning for warning in draft.warnings)
 
 
 def test_plan_only_draft_is_not_session_verified():
@@ -675,16 +883,13 @@ def test_dialog_release_is_idempotent(monkeypatch):
         _reused_ctx = None
         _released = False
 
-        def _release_session_resources(self):
-            return dlg_mod.AiAuthoringDialog._release_session_resources(self)
-
     stub = cast(dlg_mod.AiAuthoringDialog, _Stub())
     owned = ExecutionContext()
     reused_ctx_obj = ExecutionContext()
     stub._owned_ctx = owned
     stub._reused_ctx = reused_ctx_obj
-    stub._release_session_resources()
-    stub._release_session_resources()
+    dlg_mod.AiAuthoringDialog._release_session_resources(stub)
+    dlg_mod.AiAuthoringDialog._release_session_resources(stub)
     assert calls == [(owned, False), (reused_ctx_obj, True)]
     assert stub._owned_ctx is None
     assert stub._reused_ctx is None

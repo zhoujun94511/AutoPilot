@@ -10,7 +10,12 @@ from typing import Any, Callable
 
 from ..keywords.context import ExecutionContext
 from ..runtime.job_platforms import is_job_platform
-from .app_resolve import InstalledApp, resolve_installed_app
+from .app_resolve import (
+    AppResolveAmbiguousError,
+    AppResolveNotFoundError,
+    InstalledApp,
+    resolve_installed_app,
+)
 from .contract import (
     AuthoringError,
     AuthoringRequest,
@@ -24,9 +29,14 @@ from .nl_parse import parse_nl_hints  # noqa: F401 — 兼容旧导入
 
 log = logging.getLogger(__name__)
 
+_ENV_UNATTENDED = "AUTOPILOT_AUTHORING_UNATTENDED"
+_ENV_DEVICE_UDID = "AUTOPILOT_AUTHORING_DEVICE_UDID"
+
 EnsureAppiumFn = Callable[[], bool]
 #: 多设备时向调用方（UI）征询选哪台；返回空串表示放弃自动选择
 PickDeviceFn = Callable[[str, list[str]], str]
+#: 应用歧义/未命中时向调用方征询选哪个；返回 None 表示放弃
+PickAppFn = Callable[[str, list[InstalledApp]], InstalledApp | None]
 
 
 @dataclass
@@ -150,6 +160,15 @@ def _appium_server_url() -> str:
     return (os.environ.get("APPIUM_SERVER_URL") or "http://127.0.0.1:4723").strip()
 
 
+def authoring_unattended() -> bool:
+    raw = (os.environ.get(_ENV_UNATTENDED) or "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def preferred_authoring_udid(explicit: str = "") -> str:
+    return (explicit or "").strip() or (os.environ.get(_ENV_DEVICE_UDID) or "").strip()
+
+
 def _pick_udid(
     platform: str,
     preferred: str = "",
@@ -158,7 +177,7 @@ def _pick_udid(
 ) -> str:
     from ..mgmt.local_devices import list_android_devices, list_ios_devices
 
-    pref = (preferred or "").strip()
+    pref = preferred_authoring_udid(preferred)
     if platform == "ios":
         found = list(list_ios_devices())
     elif platform == "android":
@@ -183,14 +202,19 @@ def _pick_udid(
     if len(devices) == 1:
         return devices[0].udid
     udids = [d.udid for d in devices]
-    if pick_device is not None:
+    interactive = pick_device is not None and not authoring_unattended()
+    if interactive:
         chosen = (pick_device(platform, udids) or "").strip()
         if not chosen:
             raise AuthoringError("已取消：多台设备在线，未选择编写目标设备")
         if chosen not in udids:
             raise AuthoringError(f"所选设备不在线：{chosen}")
         return chosen
-    # 无交互回调（CLI/无人值守）：取第一台 ready，备注由调用方展示
+    if authoring_unattended():
+        raise AuthoringError(
+            "无人值守时检测到多台设备，请设置 AUTOPILOT_AUTHORING_DEVICE_UDID"
+        )
+    # CLI 无回调：取第一台 ready（兼容旧脚本）；无人值守不会走到这里
     return udids[0]
 
 
@@ -228,6 +252,41 @@ def _no_device_message(platform: str, found: Sequence[Any] = ()) -> str:
     return base
 
 
+def _resolve_app_with_picker(
+    platform: str,
+    *,
+    udid: str,
+    app_name: str,
+    package_name: str,
+    pick_app: PickAppFn | None,
+    chat: ChatFn | None = None,
+) -> InstalledApp:
+    """解析应用；歧义或未命中时可选回调让用户择一。"""
+    hint = (app_name or package_name or "").strip()
+    try:
+        return resolve_installed_app(
+            platform,
+            udid=udid,
+            app_name=app_name,
+            package_name=package_name,
+            chat=chat,
+        )
+    except AppResolveAmbiguousError as exc:
+        if pick_app is not None and not authoring_unattended():
+            picked = pick_app(hint, list(exc.candidates))
+            if picked is not None:
+                return picked
+        raise AuthoringError(
+            f"应用「{hint}」存在多个候选，请指定包名或从列表选择"
+        ) from exc
+    except AppResolveNotFoundError as exc:
+        if pick_app is not None and exc.candidates and not authoring_unattended():
+            picked = pick_app(hint, list(exc.candidates))
+            if picked is not None:
+                return picked
+        raise AuthoringError(str(exc)) from exc
+
+
 def prepare_authoring_session(
     request: AuthoringRequest,
     *,
@@ -235,6 +294,7 @@ def prepare_authoring_session(
     ensure_appium: EnsureAppiumFn | None = None,
     existing_ctx: Any = None,
     pick_device: PickDeviceFn | None = None,
+    pick_app: PickAppFn | None = None,
     chat: ChatFn | None = None,
     allow_nl_llm: bool = True,
 ) -> BootstrapResult:
@@ -266,6 +326,8 @@ def prepare_authoring_session(
             "未能识别平台：请指定 android / ios / web / http，或在描述中写明（Web 可填起始 URL）。"
         ) from exc
     platform = normalize_platform(plat_raw)
+    if bool(getattr(request, "use_current_app", False)) and platform not in ("android", "ios"):
+        raise AuthoringError("「使用当前前台应用」仅适用于 Android / iOS")
     req = AuthoringRequest(
         natural_language=request.natural_language,
         platform=platform,
@@ -281,15 +343,13 @@ def prepare_authoring_session(
         app_label=request.app_label or hints.app_name,
         input_texts=request.input_texts or hints.input_texts,
         project_dir=getattr(request, "project_dir", "") or "",
+        use_current_app=bool(getattr(request, "use_current_app", False)),
     )
 
     if platform == "web":
-        reuse_web = reusable_ctx(existing_ctx, "web")
-        ctx = existing_ctx if reuse_web else ExecutionContext()
-        if reuse_web:
-            notes.append("沿用当前已打开的浏览器")
-        else:
-            _apply_web_session_vars(ctx)
+        # Web 编写必须从 start_url 建立确定起点，不能继承检视器的任意历史页面。
+        ctx = ExecutionContext()
+        _apply_web_session_vars(ctx)
         if req.start_url:
             notes.append(f"起始网址：{req.start_url}")
         return BootstrapResult(
@@ -298,7 +358,7 @@ def prepare_authoring_session(
             udid="",
             resolved_app=None,
             notes=notes,
-            reused_ctx=reuse_web,
+            reused_ctx=False,
         )
 
     if platform == "http":
@@ -320,6 +380,9 @@ def prepare_authoring_session(
             strict=False,
         )
         notes.append("接口编写不占用设备；环境来自 api_env.yaml 或步骤内切换")
+        if req.start_url:
+            ctx.set_var("base_url", req.start_url)
+            notes.append(f"接口 Base URL：{req.start_url}")
         return BootstrapResult(
             ctx=ctx,
             request=req,
@@ -332,14 +395,68 @@ def prepare_authoring_session(
     udid = _pick_udid(platform, preferred_udid, pick_device=pick_device)
     notes.append(f"设备：{udid}")
 
+    if req.use_current_app:
+        if platform not in ("android", "ios"):
+            raise AuthoringError("「使用当前前台应用」仅适用于 Android / iOS")
+        app_label = (req.app_label or hints.app_name or "").strip() or "当前应用"
+        notes.append("使用当前前台应用（跳过启动与包名解析）")
+        req = AuthoringRequest(
+            natural_language=req.natural_language,
+            platform=req.platform,
+            title=req.title,
+            max_steps=req.max_steps,
+            max_turns=req.max_turns,
+            include_screenshot=req.include_screenshot,
+            draft_only=req.draft_only,
+            mode=req.mode,
+            package_name="",
+            activity_name="",
+            start_url=req.start_url,
+            app_label=app_label,
+            input_texts=req.input_texts,
+            project_dir=req.project_dir,
+            use_current_app=True,
+        )
+        reuse = reusable_ctx(existing_ctx, platform, udid=udid)
+        if reuse:
+            ctx = existing_ctx
+            notes.append("沿用当前已连接的设备会话")
+        else:
+            ctx = ExecutionContext()
+            _apply_mobile_session_vars(
+                ctx,
+                platform=platform,
+                udid=udid,
+                package_name="",
+                notes=notes,
+            )
+        if not reuse and platform in ("android", "ios") and ensure_appium is not None:
+            try:
+                ensure_appium()
+            except Exception as exc:  # noqa: BLE001
+                notes.append(debug_note(f"Appium 预检：{exc}"))
+        return BootstrapResult(
+            ctx=ctx,
+            request=req,
+            udid=udid,
+            resolved_app=None,
+            notes=notes,
+            reused_ctx=reuse,
+        )
+
     app_hint = (req.app_label or hints.app_name or "").strip()
     package = (req.package_name or "").strip()
     resolved: InstalledApp | None = None
     looks_like_id = "." in package and not package.startswith(".")
     if package and looks_like_id:
         try:
-            resolved = resolve_installed_app(
-                platform, udid=udid, package_name=package, app_name=app_hint
+            resolved = _resolve_app_with_picker(
+                platform,
+                udid=udid,
+                app_name=app_hint,
+                package_name=package,
+                pick_app=pick_app,
+                chat=chat,
             )
             package = resolved.package_name
             app_label = resolved.app_label or app_hint or package
@@ -348,17 +465,21 @@ def prepare_authoring_session(
         except AuthoringError as exc:
             app_label = app_hint or package
             notes.append(debug_note(f"安装校验跳过：{exc}"))
-    else:
-        resolved = resolve_installed_app(
+    elif app_hint or package:
+        resolved = _resolve_app_with_picker(
             platform,
             udid=udid,
             app_name=app_hint or package,
             package_name="",
+            pick_app=pick_app,
+            chat=chat,
         )
         package = resolved.package_name
         app_label = resolved.app_label or app_hint or package
         notes.append(f"应用：{app_label}")
         notes.append(debug_note(f"应用解析：{app_label} → {package}"))
+    else:
+        raise AuthoringError("未提供应用名/包名，无法自动解析；可勾选「使用当前前台应用」")
 
     activity = (req.activity_name or "").strip()
     if platform == "android" and not activity and package:
@@ -384,6 +505,7 @@ def prepare_authoring_session(
         app_label=app_label,
         input_texts=req.input_texts,
         project_dir=req.project_dir,
+        use_current_app=False,
     )
 
     if not req.package_name:
@@ -423,15 +545,20 @@ def prepare_authoring_session(
 
 
 def _apply_web_session_vars(ctx: Any) -> None:
-    """Web 会话：把 IDE 选定的引擎带上，否则 driver 工厂按默认引擎起浏览器。"""
+    """Web 会话与 F5 对齐：引擎、浏览器类型和当前平台一并注入。"""
     try:
         from ..runtime import settings
 
         eng = str(settings.web_engine() or "").strip().lower()
+        browser = str(settings.web_browser() or "").strip()
     except (ImportError, AttributeError, OSError, RuntimeError, TypeError, ValueError):
         eng = ""
+        browser = ""
     if eng in ("selenium", "playwright"):
         ctx.set_var("__web_engine__", eng)
+    if browser:
+        ctx.set_var("__web_browser__", browser)
+    ctx.set_var("__current_platform__", "web")
 
 
 def release_authoring_session(

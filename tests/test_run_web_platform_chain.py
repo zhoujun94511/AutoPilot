@@ -140,8 +140,8 @@ def test_on_suite_done_report_meta_includes_web():
     get_qt_app()
     captured: dict = {}
 
-    def _fake_write(_suite, out, _generated_at="", report_meta=None):
-        captured["meta"] = report_meta
+    def _fake_write(_suite, out, **kwargs):
+        captured["meta"] = kwargs.get("meta")
         return out
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -198,6 +198,7 @@ def test_bootstrap_copies_project_dir_onto_request(tmp_path, monkeypatch):
             natural_language="点击登录按钮",
             platform="",
             mode="session",
+            package_name="com.acme.demo",
             project_dir=str(tmp_path),
         ),
         allow_nl_llm=False,

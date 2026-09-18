@@ -14,6 +14,7 @@ from typing import Any
 
 from .contract import AuthoringError, GeneratedStep
 from .llm_client import ChatFn, complete_json
+from .system_app_aliases import expand_term_hints
 
 _ENV_DEEP_THINK = "AUTOPILOT_AUTHORING_DEEP_THINK"
 
@@ -43,9 +44,28 @@ def match_hint_to_locator(
     *,
     page_locators: set[str] | None = None,
 ) -> str:
-    """用 comment / target 文案在页摘要里找最像的 ``l``。"""
+    """用 comment / target 文案在页摘要里找最像的 ``l``。
+
+    短子串命中更长文案（如「设置」对上「WLAN设置」）不算数；同分且不同 locator 视为歧义。
+    """
     key = _norm(hint)
     if not key or not elements:
+        return ""
+    for candidate in expand_term_hints(hint) or (hint,):
+        hit = _match_single_hint(candidate, elements, page_locators=page_locators)
+        if hit:
+            return hit
+    return ""
+
+
+def _match_single_hint(
+    hint: str,
+    elements: list[dict[str, Any]],
+    *,
+    page_locators: set[str] | None = None,
+) -> str:
+    key = _norm(hint)
+    if not key:
         return ""
     scored: list[tuple[int, str]] = []
     for el in elements:
@@ -55,19 +75,34 @@ def match_hint_to_locator(
         if page_locators is not None and loc not in page_locators:
             continue
         tx = _norm(str(el.get("tx") or ""))
-        # 也比一下 locator 本体（name::无线局域网）
         loc_body = _norm(loc.split("::", 1)[-1] if "::" in loc else loc)
-        score = 0
-        if tx and (key == tx or key in tx or tx in key):
-            score = 100 if key == tx else 80
-        elif loc_body and (key == loc_body or key in loc_body or loc_body in key):
-            score = 70 if key == loc_body else 50
+        score = _hint_score(key, tx) or _hint_score(key, loc_body)
         if score:
             scored.append((score, loc))
     if not scored:
         return ""
     scored.sort(key=lambda x: (-x[0], len(x[1])))
-    return scored[0][1]
+    best_score, best_loc = scored[0]
+    ties = [loc for score, loc in scored if score == best_score and loc != best_loc]
+    if ties:
+        return ""
+    if len(scored) >= 2 and best_score < 100 and best_score - scored[1][0] < 20:
+        return ""
+    return best_loc
+
+
+def _hint_score(key: str, haystack: str) -> int:
+    if not key or not haystack:
+        return 0
+    if key == haystack:
+        return 100
+    if key in haystack:
+        ratio = len(key) / max(1, len(haystack))
+        return 80 if ratio >= 0.55 else 0
+    if haystack in key:
+        ratio = len(haystack) / max(1, len(key))
+        return 70 if ratio >= 0.55 else 0
+    return 0
 
 
 def _step_hint(step: GeneratedStep) -> str:

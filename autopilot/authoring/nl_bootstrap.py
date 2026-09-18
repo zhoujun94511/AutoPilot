@@ -174,6 +174,7 @@ def extract_nl_hints_via_llm(
 - 不要仅因为出现 http(s) 就判成 web
 - 「设置」可以是 iOS/Android 系统应用名
 - input_texts 只收要键入的值，不要收控件名（如「输入栏」「搜索框」）
+- 不要抽取页面名、开关、按钮、菜单等路径对象（不是启动槽位）
 - 不确定的字段留空字符串或空数组，禁止编造包名
 """
     data = complete_json(prompt, chat=chat, purpose="planning")

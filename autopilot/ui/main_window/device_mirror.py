@@ -48,6 +48,7 @@ class DeviceMirrorMixin(_Base):
     _mirror_avf_active: bool          # 当前镜像是否处于 AVFoundation 原生采集阶段
     _mirror_avf_retries: int          # AVFoundation 采集断流重试计数
     _mirror_fallback_mjpeg: bool      # 控制就绪后切 MJPEG（高帧回退路径）
+    _mirror_control_error: str        # 最近一次 WDA 控制会话失败原因
 
     if TYPE_CHECKING:
         # 由 DeviceMixin / MainWindow 提供；仅供本文件静态解析
@@ -68,11 +69,28 @@ class DeviceMirrorMixin(_Base):
 
     def _on_mirror_device_gone(self) -> None:
         a, i = getattr(self, "_devices", ([], []))
-        if self.mirror.active() and self._mirror_gone(
-                self.mirror.platform_name(), getattr(self, "_mirror_udid", ""),
-                a, i):
-            self.console.log("镜像设备已断开，已自动停止实时镜像", "镜像", "WARNING")
-            self.mirror.stop()
+        pending = bool(getattr(self, "_mirror_control_pending", False))
+        platform = self.mirror.platform_name() if self.mirror.active() else (
+            "ios" if pending else "")
+        if (self.mirror.active() or pending) and self._mirror_gone(
+                platform, getattr(self, "_mirror_udid", ""), a, i):
+            if self.mirror.active():
+                self.console.log("镜像设备已断开，已自动停止实时镜像", "镜像", "WARNING")
+                self.mirror.stop()
+                return
+            if pending:
+                cancel = getattr(self, "_mirror_cancel", None)
+                if cancel is not None:
+                    cancel.set()
+                self._mirror_want_live = False
+                self._mirror_control_pending = False
+                self._mirror_control_error = "目标 iOS 设备已断开或已切换"
+                self.console.log(
+                    "iOS 镜像准备已取消：目标设备已断开或已切换，请重新点「开始」选择当前设备",
+                    "镜像", "WARNING")
+                self.mirror.lbl.setText("iOS 设备已切换")
+                self.mirror.view.set_hint("目标 iOS 设备已断开\n请重新点「开始」连接当前设备")
+                return
 
     def _prepare_mirror_start(self) -> bool:
         """实时镜像「开始」前：确认真机在线并选定目标（resume / 枢纽预选仅校验仍在线）。"""
@@ -234,9 +252,13 @@ class DeviceMirrorMixin(_Base):
         w = getattr(self, "_ios_sess_worker", None)
         if w is not None and w.isRunning():
             return
+        # 固定本轮目标。设备监控和 worker 都必须使用同一 UDID；准备期间发生拔插/换机时
+        # 不得让可变的 _inspect_udid 把正在执行的 WDA 链路悄悄切到另一台设备。
+        self._mirror_udid = (self._inspect_udid or "").strip()
         self._mirror_want_live = True
         self._mirror_control_pending = True
         self._mirror_fallback_mjpeg = fallback_mjpeg
+        self._mirror_control_error = ""
         cancel = getattr(self, "_mirror_cancel", None)
         if cancel is None:
             cancel = threading.Event()
@@ -244,17 +266,42 @@ class DeviceMirrorMixin(_Base):
         cancel.clear()
         self.console.log("正在建立 iOS WDA 控制会话…", "镜像")
         # 高帧首帧后画面已在播，勿再盖占位层（状态栏文案已足够）
-        self._ios_sess_worker = SnapshotWorker(self._mirror_ios_control_session, self)
+        self._ios_sess_worker = SnapshotWorker(self._run_mirror_ios_control_session, self)
         # noinspection PyUnresolvedReferences
         self._ios_sess_worker.done.connect(self._on_ios_mirror_control_ready)
         self._ios_sess_worker.start()
+
+    def _run_mirror_ios_control_session(self) -> bool:
+        """保留后台异常的可操作诊断，避免 ``SnapshotWorker`` 将根因折叠成 ``None``。"""
+        # noinspection PyBroadException
+        try:
+            return self._mirror_ios_control_session()
+        except Exception as exc:  # noqa: BLE001
+            detail = clean_driver_err(
+                exc,
+                "iOS",
+                getattr(
+                    getattr(self._inspect_ctx, "appium", None),
+                    "backend",
+                    "",
+                ),
+            )
+            self._mirror_control_error = detail
+            get_logger("镜像").exception("iOS 镜像控制会话异常：%s", detail)
+            return False
 
     def _mirror_ios_control_session(self) -> bool:
         """镜像专用：只建 WDA/Appium 控制会话，不取 page_source/检视快照。"""
         plat = (self._inspect_platform or "").strip()
         if plat != "iOS":
+            self._mirror_control_error = f"镜像平台已变化：{plat or '未选择'}"
             return False
         if not self._guard_mobile_session_target("镜像"):
+            self._mirror_control_error = "目标 iOS 设备当前不在线"
+            return False
+        target_udid = (getattr(self, "_mirror_udid", "") or self._inspect_udid).strip()
+        if not target_udid:
+            self._mirror_control_error = "未选择 iOS 设备"
             return False
         # 延迟：Appium/WDA 会话与 iOS 工具链仅镜像控制路径需要
         from ...keywords.mobile.driver import get_manager, ios_session_probe
@@ -277,7 +324,7 @@ class DeviceMirrorMixin(_Base):
 
         if self._inspect_ctx is None:
             self._inspect_ctx = ExecutionContext()
-            self._inspect_ctx.set_var("__device_udid__", self._inspect_udid)
+            self._inspect_ctx.set_var("__device_udid__", target_udid)
             self._inspect_ctx.set_var("__inspect_platform__", "iOS")
             backend_mode = getattr(self, "_ios_backend_mode", "auto") or "auto"
             self._inspect_ctx.set_var("__mobile_backend_mode__", backend_mode)
@@ -290,12 +337,13 @@ class DeviceMirrorMixin(_Base):
         if not wda:
             # noinspection PyBroadException
             try:
-                wda = ib.IosDevicePrep(self._inspect_udid, "").discover_wda()
+                wda = ib.IosDevicePrep(target_udid, "").discover_wda()
                 self._inspect_wda = wda
             except Exception as e:  # noqa: BLE001
+                self._mirror_control_error = str(e)
                 get_logger("镜像").error(
                     "未发现 WDA bundle（udid=%s）：%s",
-                    self._inspect_udid or "?", e)
+                    target_udid or "?", e)
                 return False
 
         base_vars: dict = {}
@@ -306,7 +354,7 @@ class DeviceMirrorMixin(_Base):
             # 盯着画面不发指令时不能让 Appium 判超时杀 session。检视快照是一次性的，沿用
             # 默认 60s，不受此影响（改动面只限镜像）。
             ib.merge_appium_ios_caps(
-                base_vars, self._inspect_udid, wda, getattr(self, "_ios_backend_mode", "auto"),
+                base_vars, target_udid, wda, getattr(self, "_ios_backend_mode", "auto"),
                 extra={"appium:newCommandTimeout": 0})
             self._inspect_ctx.set_var(
                 "__appium_server__",
@@ -328,15 +376,21 @@ class DeviceMirrorMixin(_Base):
                         return True
                 except Exception:
                     pass
-                mgr.create(plat, "", "", self._inspect_udid)
-                return ios_session_probe(mgr)
+                mgr.create(plat, "", "", target_udid)
+                if ios_session_probe(mgr):
+                    return True
+                last = "WDA 会话已创建，但窗口探活失败"
+                if attempt == 0:
+                    continue
+                break
             except Exception as e:  # noqa: BLE001
                 last = clean_driver_err(e, plat, getattr(mgr, "backend", ""))
                 mgr.release_driver()
                 if attempt == 0:
                     continue
                 break
-        get_logger("镜像").error("镜像控制会话建立失败：%s", last)
+        self._mirror_control_error = last or "WDA 控制会话不可用"
+        get_logger("镜像").error("镜像控制会话建立失败：%s", self._mirror_control_error)
         return False
 
     def _on_mirror_first_frame(self) -> None:
@@ -359,7 +413,14 @@ class DeviceMirrorMixin(_Base):
         self._mirror_control_pending = False
         fallback_mjpeg = getattr(self, "_mirror_fallback_mjpeg", False)
         self._mirror_fallback_mjpeg = False
-        if ok and self._ios_session_alive():
+        cancel = getattr(self, "_mirror_cancel", None)
+        if (cancel is not None and cancel.is_set()) or not getattr(
+                self, "_mirror_want_live", False):
+            return
+        # worker 返回 True 前已经执行过 ios_session_probe；这里不能紧接着再次做破坏性探活。
+        # 该探针失败时会 quit + 清空 driver，WDA 刚启动阶段的瞬时抖动会因此把已成功会话
+        # 反手拆掉，最终只留下无根因的「镜像控制建立失败」。
+        if ok:
             self.console.log("镜像控制通道就绪", "镜像")
             if not self.mirror.active():
                 # 用户已停止：丢弃晚到的控制就绪，禁止自动重开
@@ -382,9 +443,14 @@ class DeviceMirrorMixin(_Base):
             if control is not None:
                 self.mirror.attach_control(control)
             return
-        self.console.log(
-            "镜像控制建立失败（画面已开；调试可设 IOS_MIRROR_STRICT=1 排查）",
-            "镜像", "WARNING")
+        detail = (getattr(self, "_mirror_control_error", "") or "WDA 会话探活失败").strip()
+        if self.mirror.active():
+            message = f"镜像控制建立失败，画面保持只读：{detail}"
+        else:
+            message = f"iOS 镜像连接失败：{detail}"
+            self.mirror.lbl.setText("iOS 镜像连接失败")
+            self.mirror.view.set_hint(f"iOS 镜像连接失败\n{detail}\n请确认设备已解锁后重试")
+        self.console.log(message, "镜像", "WARNING")
 
     def _on_ios_session_ready(self, data) -> None:
         """兼容旧入口：转镜像控制就绪处理。"""

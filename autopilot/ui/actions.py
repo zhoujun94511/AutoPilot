@@ -48,6 +48,8 @@ ACTIONS: tuple[ActionSpec, ...] = (
     ActionSpec("file.save", "保存", "save_current", shortcut="Ctrl+S", icon="mdi6.content-save"),
     ActionSpec("file.save_as", "另存为…", "save_as_dialog", icon="mdi6.content-save-edit-outline"),
     ActionSpec("file.close", "关闭当前", "close_current", shortcut="Ctrl+W", icon="mdi6.close"),
+    ActionSpec("file.close_project", "关闭工程", "close_project", icon="mdi6.folder-remove-outline",
+               tip="关闭当前工程并回到欢迎页（最近列表保留）"),
     ActionSpec("file.rename", "重命名…", "rename_dialog", icon="mdi6.rename-box"),
     ActionSpec("file.delete", "删除", "delete_dialog", icon="mdi6.delete-outline"),
 
@@ -146,7 +148,7 @@ ACTIONS: tuple[ActionSpec, ...] = (
                tip="把多次稳定成功的意图步骤固化成普通关键字"),
     ActionSpec("authoring.ai_assist", "AI 辅助编写…", "authoring_ai_assist",
                icon="mdi6.robot-outline",
-               tip="用一句话描述操作，自动在设备上试出可运行的用例"),
+               tip="用一句话描述操作，在设备上编写可运行的用例"),
     ActionSpec("mgmt.open", "打开管理台", "mgmt_open_web",
                icon="mdi6.open-in-new",
                tip="浏览器打开管理台（已登录可免二次登录）"),
@@ -168,7 +170,7 @@ MENUS: tuple = (
         ("submenu", "新建", ["file.new_case", "file.new_suite", "file.new_map",
                             "file.new_dataconfig", "file.new_testplan",
                             "file.new_keyword", "file.new_folder"]),
-        _SEP, "file.save", "file.save_as", "file.close",
+        _SEP, "file.save", "file.save_as", "file.close", "file.close_project",
         _SEP, "file.rename", "file.delete",
     ]),
     ("编辑(&E)", [

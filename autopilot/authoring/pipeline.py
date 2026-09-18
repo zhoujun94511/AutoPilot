@@ -18,8 +18,10 @@ from .contract import (
 )
 from .gate import GateResult, assert_local_dry_run_passed, record_gate_result
 from .llm_client import ChatFn, complete_json
+from .nl_parse import parse_nl_hints
 from .prompt import build_authoring_prompt
 from .registry_catalog import build_keyword_catalog
+from .secrets import collect_secret_map, mask_text
 from .step_runner import StepExecutor
 
 
@@ -42,6 +44,7 @@ def generate_traditional_case(
     executor: StepExecutor | None = None,
     on_progress: ProgressFn | None = None,
     save: bool = True,
+    cancel_event: Any = None,
 ) -> AuthoringResult:
     """主入口。
 
@@ -63,6 +66,7 @@ def generate_traditional_case(
             chat=chat,
             executor=executor,
             on_progress=on_progress,
+            cancel_event=cancel_event,
         )
         capture_meta = {
             "platform": platform,
@@ -120,14 +124,20 @@ def _plan_only(
     catalog = build_keyword_catalog(platform)
     if not catalog:
         raise AuthoringError(f"平台 {platform} 无可用关键字白名单")
+    hints = parse_nl_hints(request.natural_language)
+    secret_map = collect_secret_map(
+        request.natural_language,
+        tuple(request.input_texts or hints.input_texts),
+    )
     prompt = build_authoring_prompt(
-        natural_language=request.natural_language,
+        natural_language=mask_text(request.natural_language, secret_map),
         platform=platform,
         elements_text=el_text,
         keyword_catalog=catalog,
         max_steps=max_steps,
         package_name=request.package_name,
         start_url=request.start_url,
+        app_label=request.app_label,
     )
     data = complete_json(prompt, chat=chat, purpose="authoring")
     draft = parse_llm_draft(

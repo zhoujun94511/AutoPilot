@@ -12,9 +12,46 @@ from typing import Any
 
 
 def page_signature(elements_text: str) -> str:
-    """用摘要里定位符集合做稳定签名（顺序无关）。"""
-    locs = _extract_locators(elements_text)
-    blob = "\n".join(sorted(locs))
+    """用当前可见控件语义生成顺序无关的复合页面指纹。
+
+    仅哈希 locator 会把“同一列表模板、不同商品内容”误判成同页；这里同时纳入
+    文本、角色、交互性和位置摘要，但仍忽略元素枚举顺序。
+    """
+    try:
+        items = json.loads(elements_text or "[]")
+    except (TypeError, ValueError):
+        return "empty"
+    if not isinstance(items, list):
+        return "empty"
+    semantic_items: list[str] = []
+    stable_keys = (
+        "l",
+        "tx",
+        "text",
+        "n",
+        "name",
+        "r",
+        "role",
+        "ck",
+        "ed",
+        "p",
+        "bounds",
+        "selected",
+        "checked",
+    )
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        semantic = {
+            key: item[key]
+            for key in stable_keys
+            if key in item and item[key] not in (None, "", [], {})
+        }
+        if semantic:
+            semantic_items.append(
+                json.dumps(semantic, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            )
+    blob = "\n".join(sorted(semantic_items))
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16] if blob else "empty"
 
 

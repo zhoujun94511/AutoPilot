@@ -48,12 +48,21 @@ def normalize_ui_platform(raw: str) -> str:
     return ""
 
 
+def default_authoring_platform(project_platform: str) -> str:
+    """工程默认平台 → 编写弹窗初始选项；无法识别时用自动。"""
+    p = normalize_ui_platform(project_platform)
+    if p in ("android", "ios", "web", "http"):
+        return p
+    return "auto"
+
+
 __all__ = [
     "PLATFORM_MENU_CHOICES",
     "PLATFORM_LABELS",
     "SUPPORTED_RUNTIME_PLATFORMS",
     "platform_label",
     "normalize_ui_platform",
+    "default_authoring_platform",
     "is_deviceless_platform",
     "is_http_platform",
     "is_web_platform",

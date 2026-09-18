@@ -479,16 +479,16 @@ def test_delete_closes_open_tab() -> bool:
                 confirm_mod.confirm = orig
             closed = (win._doc_index(case) < 0 and not os.path.exists(case)
                       and refreshed["n"] >= 1)
-            # 删完无其它标签 → 中央区回到欢迎页，而非停留在用例编辑器
-            back_to_welcome = win.center.currentWidget() is win.welcome
+            # 删完无其它标签、工程仍开着 → 空编辑区，而不是欢迎页
+            back_to_idle = win.center.currentWidget() is win.empty_workspace
             win.close()
-        ok = opened and closed and back_to_welcome
+        ok = opened and closed and back_to_idle
     except Exception as e:  # noqa: BLE001
         import traceback
         traceback.print_exc()
         print("删除关闭标签: ⏭ 跳过(", e, ")")
         return True
-    print("删除用例关闭其标签+回欢迎页:", "✅" if ok else "❌")
+    print("删除用例关闭其标签+回空编辑区:", "✅" if ok else "❌")
     return ok
 
 
@@ -514,7 +514,7 @@ def test_rename_and_switch_project_sync() -> bool:
             with tempfile.TemporaryDirectory() as proj2:
                 win.open_project(proj2)                  # 切工程
                 switch_ok = (len(win._open_docs) == 0
-                             and win.center.currentWidget() is win.welcome)
+                             and win.center.currentWidget() is win.empty_workspace)
             win.close()
         ok = rename_ok and switch_ok
     except Exception as e:  # noqa: BLE001
@@ -870,6 +870,40 @@ def test_map_editor_platform_slot() -> bool:
     return ok
 
 
+def test_idle_center_welcome_vs_workspace() -> bool:
+    """无工程→欢迎页；有工程无文档→空编辑区；关最后标签不弹回欢迎页；关闭工程回欢迎页。"""
+    try:
+        from autopilot.runtime import settings
+        with tempfile.TemporaryDirectory() as cfg:
+            os.environ["AUTOPILOT_CONFIG_DIR"] = cfg
+            win = _win("")
+            no_proj = win.center.currentWidget() is win.welcome
+            win.close()
+            with tempfile.TemporaryDirectory() as proj:
+                win = _win(proj)
+                with_proj = win.center.currentWidget() is win.empty_workspace
+                case = win.create_resource("case", proj, "IDLE01")
+                win._on_file_activated(case)
+                opened = win.center.currentWidget() is win.case_editor
+                win.close_current()
+                after_close = win.center.currentWidget() is win.empty_workspace
+                win.close_project()
+                after_close_proj = (
+                    win.center.currentWidget() is win.welcome
+                    and (win.project_dir or "") == ""
+                    and settings.last_project() == ""
+                )
+                win.close()
+        ok = no_proj and with_proj and opened and after_close and after_close_proj
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        traceback.print_exc()
+        print("欢迎页/空编辑区切换: ⏭ 跳过(", e, ")")
+        return True
+    print("欢迎页/空编辑区切换(无工程欢迎/有工程空区/关标签/关工程):", "✅" if ok else "❌")
+    return ok
+
+
 def main() -> int:
     ok = all([test_create_resources(), test_folder_rename_delete(),
               test_open_project(), test_new_project_and_remember(),
@@ -881,7 +915,8 @@ def main() -> int:
               test_keyword_usage_decay(), test_inspector_crop_save(),
               test_platform_marker_and_guard(), test_map_editor_platform_slot(),
               test_keyword_recent_group(), test_new_project_dialog(),
-              test_case_shell_move(), test_multi_tab_editor()])
+              test_case_shell_move(), test_multi_tab_editor(),
+              test_idle_center_welcome_vs_workspace()])
     print("\n总结:", "✅ 文件/工程操作全绿" if ok else "❌ 存在失败")
     return 0 if ok else 1
 

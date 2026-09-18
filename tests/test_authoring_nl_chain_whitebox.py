@@ -498,6 +498,122 @@ def test_dialog_resolve_once_then_bootstrap_skips_llm(tmp_path, monkeypatch):
     assert dlg._generating is False
 
 
+def test_dialog_unattended_does_not_inject_pickers(tmp_path, monkeypatch):
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch, platform_data="ios")
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_DEVICE_UDID", "UDID-ENV")
+    prepare_kw: list[dict] = []
+
+    def fake_resolve(_nl, **_kw):
+        return (
+            NlHints(platform="ios", app_name="设置", package_name="com.apple.Preferences"),
+            [],
+        )
+
+    def fake_prepare(req, **kw):
+        prepare_kw.append(kw)
+        return type(
+            "Boot",
+            (),
+            {
+                "request": req,
+                "ctx": ExecutionContext(),
+                "notes": [],
+                "reused_ctx": False,
+                "udid": "UDID-ENV",
+                "resolved_app": None,
+            },
+        )()
+
+    def fake_gen(req, **_kw):
+        return AuthoringResult(
+            draft=AuthoringDraft(
+                title="t",
+                platform=req.platform,
+                steps=[],
+                mode="session",
+                goal_completed=True,
+            )
+        )
+
+    monkeypatch.setattr(dlg_mod, "resolve_nl_hints", fake_resolve)
+    monkeypatch.setattr(dlg_mod, "prepare_authoring_session", fake_prepare)
+    monkeypatch.setattr(dlg_mod, "generate_traditional_case", fake_gen)
+    monkeypatch.setattr(dlg_mod, "release_authoring_session", lambda *a, **k: None)
+    dlg.ed_nl.setPlainText("打开设置")
+    dlg._on_generate()
+    assert len(prepare_kw) == 1
+    assert prepare_kw[0].get("pick_device") is None
+    assert prepare_kw[0].get("pick_app") is None
+    assert prepare_kw[0].get("preferred_udid") == "UDID-ENV"
+
+
+def test_dialog_unattended_prefers_inspector_udid(tmp_path, monkeypatch):
+    from tests._qt import get_qt_app
+    from autopilot.ui.widgets import ai_authoring_dialog as dlg_mod
+
+    get_qt_app()
+    monkeypatch.setattr(dlg_mod.QMessageBox, "warning", lambda *a, **k: None)
+    monkeypatch.setattr(dlg_mod.QMessageBox, "critical", lambda *a, **k: None)
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_UNATTENDED", "1")
+    monkeypatch.setenv("AUTOPILOT_AUTHORING_DEVICE_UDID", "UDID-ENV")
+    inspector = ExecutionContext()
+    inspector.set_var("__device_udid__", "UDID-INSPECTOR")
+    prepare_kw: list[dict] = []
+
+    def fake_prepare(req, **kw):
+        prepare_kw.append(kw)
+        return type(
+            "Boot",
+            (),
+            {
+                "request": req,
+                "ctx": inspector,
+                "notes": [],
+                "reused_ctx": True,
+                "udid": "UDID-INSPECTOR",
+                "resolved_app": None,
+            },
+        )()
+
+    monkeypatch.setattr(
+        dlg_mod,
+        "resolve_nl_hints",
+        lambda _nl, **_kw: (
+            NlHints(platform="ios", app_name="设置", package_name="com.apple.Preferences"),
+            [],
+        ),
+    )
+    monkeypatch.setattr(dlg_mod, "prepare_authoring_session", fake_prepare)
+    monkeypatch.setattr(
+        dlg_mod,
+        "generate_traditional_case",
+        lambda req, **_kw: AuthoringResult(
+            draft=AuthoringDraft(title="t", platform=req.platform, steps=[], mode="session")
+        ),
+    )
+    monkeypatch.setattr(dlg_mod, "release_authoring_session", lambda *a, **k: None)
+    dlg = dlg_mod.AiAuthoringDialog(
+        None,
+        project_dir=str(tmp_path),
+        default_platform="ios",
+        chat_fn=lambda _p: "{}",
+        get_ctx=lambda: inspector,
+    )
+    dlg.ed_nl.setPlainText("打开设置")
+    dlg._on_generate()
+    assert prepare_kw[0].get("preferred_udid") == "UDID-INSPECTOR"
+    assert prepare_kw[0].get("pick_device") is None
+
+
+def test_dialog_web_relabels_session_write(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch, platform_data="web")
+    assert dlg.btn_gen.text() == "在浏览器上编写"
+    assert dlg.cmb_mode.itemText(0).startswith("在浏览器上编写")
+    assert dlg.btn_try.isHidden() is False
+    assert dlg._lbl_url.text() == "起始页 URL"
+
+
 def test_dialog_explicit_platform_overrides_hints(tmp_path, monkeypatch):
     dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch, platform_data="android")
 
@@ -545,6 +661,135 @@ def test_dialog_explicit_platform_overrides_hints(tmp_path, monkeypatch):
     dlg.ed_nl.setPlainText("打开随便什么")
     dlg._on_generate()
     assert seen[0].platform == "android"  # 下拉框优先于 LLM 猜的 ios
+
+
+def test_dialog_advanced_panel_first_expand_keeps_field_height(tmp_path, monkeypatch):
+    """默认隐藏的高级面板首次展开时，中文下拉/勾选不能被未 polish 的矮 sizeHint 挤扁。"""
+    from PyQt6.QtWidgets import QSizePolicy
+
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    assert dlg._adv_scroll.isHidden()
+    dlg.btn_advanced.setChecked(True)
+    assert not dlg._adv_scroll.isHidden()
+    min_h = dlg._field_min_height()
+    assert dlg.cmb_mode.minimumHeight() >= min_h
+    assert dlg.ed_package.minimumHeight() >= min_h
+    assert dlg.ed_url.minimumHeight() >= min_h
+    assert dlg.spn_steps.minimumHeight() >= min_h
+    assert dlg.chk_current_app.minimumHeight() >= 22
+    assert dlg.chk_draft.minimumHeight() >= 22
+    assert dlg.cmb_mode.sizeHint().height() >= min_h
+    assert dlg.cmb_mode.sizePolicy().verticalPolicy() == QSizePolicy.Policy.Fixed
+    assert dlg.adv_panel.minimumHeight() >= dlg.spn_steps.minimumHeight()
+    dlg.btn_advanced.setChecked(False)
+    dlg.btn_advanced.setChecked(True)
+    assert dlg.cmb_mode.minimumHeight() >= min_h
+    assert dlg.spn_steps.minimumHeight() >= min_h
+
+
+def test_dialog_idle_stop_and_save_are_not_default(tmp_path, monkeypatch):
+    """空闲时停止应禁用；写入不能抢回车，避免高级选项里按 Enter 误保存。"""
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    assert not dlg.btn_stop.isEnabled()
+    assert not dlg.btn_save.isDefault()
+    assert not dlg.btn_save.autoDefault()
+    assert dlg.btn_gen.isDefault()
+    assert dlg.btn_advanced.objectName() == "authoring_advanced"
+    assert dlg._empty._theme == dlg._ui_theme
+
+
+def test_dialog_empty_steps_stretch_grows_after_fill(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    lay = dlg.layout()
+    stack_idx = lay.indexOf(dlg._steps_stack)
+    assert lay.stretch(stack_idx) == 1
+    dlg._draft = AuthoringDraft(
+        title="t",
+        platform="web",
+        steps=[GeneratedStep(keyword_id="web_element_click", params={})],
+        mode="session",
+    )
+    dlg._fill_table()
+    assert lay.stretch(stack_idx) == 2
+    dlg._draft = AuthoringDraft(title="t", platform="web", steps=[], mode="session")
+    dlg._fill_table()
+    assert lay.stretch(stack_idx) == 1
+
+
+def test_dialog_nl_placeholder_keeps_height_when_advanced_open(tmp_path, monkeypatch):
+    """展开高级选项时，两行自然语言示例不能被 QSS 单行 min-height 挤成叠字。"""
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    ph = dlg.ed_nl.placeholderText()
+    assert "\n" in ph
+    dlg.btn_advanced.setChecked(True)
+    min_h = dlg._nl_min_height()
+    assert dlg.ed_nl.minimumHeight() >= min_h
+    assert dlg.ed_nl.minimumHeight() >= dlg.ed_nl.fontMetrics().lineSpacing() * (
+        ph.count("\n") + 2
+    )
+    lay = dlg.layout()
+    assert lay.stretch(lay.indexOf(dlg.ed_nl)) == 0
+    assert lay.stretch(lay.indexOf(dlg._steps_stack)) == 1
+    dlg.btn_advanced.setChecked(False)
+    assert lay.stretch(lay.indexOf(dlg.ed_nl)) == 1
+    assert lay.stretch(lay.indexOf(dlg._steps_stack)) == 1
+
+
+def test_dialog_advanced_web_hides_package_form_row(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch, platform_data="web")
+    dlg.btn_advanced.setChecked(True)
+    assert dlg.ed_package.isHidden()
+    assert not dlg.ed_url.isHidden()
+    form = dlg._adv_form
+    if hasattr(form, "isRowVisible"):
+        assert form.isRowVisible(dlg.ed_package) is False
+        assert form.isRowVisible(dlg.ed_url) is True
+        assert form.isRowVisible(dlg.chk_current_app) is False
+    dlg.cmb_platform.setCurrentIndex(dlg.cmb_platform.findData("android"))
+    assert not dlg.ed_package.isHidden()
+    if hasattr(form, "isRowVisible"):
+        assert form.isRowVisible(dlg.ed_package) is True
+        assert form.isRowVisible(dlg.ed_url) is False
+
+
+def test_dialog_sets_busy_before_nl_resolve(tmp_path, monkeypatch):
+    """解析在后台跑时，界面必须已进入忙碌，停止才能点。"""
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch, platform_data="web")
+    seen: list[bool] = []
+
+    def fake_resolve(_nl, **_kw):
+        seen.append(dlg._generating)
+        return NlHints(platform="web", start_url="https://a.test"), []
+
+    monkeypatch.setattr(dlg_mod, "resolve_nl_hints", fake_resolve)
+    monkeypatch.setattr(
+        dlg_mod,
+        "prepare_authoring_session",
+        lambda req, **_kw: type(
+            "Boot",
+            (),
+            {
+                "request": req,
+                "ctx": ExecutionContext(),
+                "notes": [],
+                "reused_ctx": False,
+                "udid": "",
+                "resolved_app": None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(
+        dlg_mod,
+        "generate_traditional_case",
+        lambda req, **_kw: AuthoringResult(
+            draft=AuthoringDraft(title="t", platform=req.platform, steps=[], mode="session")
+        ),
+    )
+    monkeypatch.setattr(dlg_mod, "release_authoring_session", lambda *a, **k: None)
+    dlg.ed_nl.setPlainText("打开页面")
+    dlg._on_generate()
+    assert seen == [True]
+    assert dlg._generating is False
 
 
 def test_dialog_plan_only_skips_prepare(tmp_path, monkeypatch):
@@ -735,11 +980,239 @@ def test_compact_catalog_keeps_http_keywords():
     raw = _compact_keyword_catalog(
         [
             {"id": "http_get", "params": [{"id": "url"}]},
+            {"id": "api_env_use", "params": [{"id": "profile"}]},
             {"id": "web_browser_open", "params": [{"id": "url"}]},
             {"id": "excel_read", "params": []},
+            {"id": "elementClick", "params": []},
         ],
         platform="http",
     )
     assert "http_get" in raw
+    assert "api_env_use" in raw
     assert "web_browser_open" not in raw
     assert "excel_read" not in raw
+    assert "elementClick" not in raw
+
+
+def test_dialog_plan_only_is_advanced_and_forces_draft(tmp_path, monkeypatch):
+    from autopilot.authoring.gate import GateResult
+
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch, mode="plan_only")
+    labels = [dlg.cmb_mode.itemText(i) for i in range(dlg.cmb_mode.count())]
+    assert any("高级" in text and "不可上传" in text for text in labels)
+    assert dlg.cmb_mode.currentData() == "plan_only"
+
+    dlg._draft = AuthoringDraft(
+        title="草稿",
+        platform="web",
+        steps=[GeneratedStep(keyword_id="web_element_click", params={"locator": "css::#a"})],
+        mode="plan_only",
+        session_verified=True,
+        goal_completed=True,
+    )
+    dlg.chk_draft.setChecked(False)
+    seen: dict = {}
+    out = tmp_path / "authored" / "x.tc.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("type: testcase\n", encoding="utf-8")
+
+    monkeypatch.setattr(dlg_mod, "save_draft_tc", lambda *_a, **_k: out)
+    monkeypatch.setattr(dlg_mod.QMessageBox, "information", lambda *_a, **_k: None)
+    monkeypatch.setattr(dlg, "accept", lambda: None)
+
+    def fake_gate(_path, **kw):
+        seen.update(kw)
+        return GateResult(ok=True, message="草稿", allow_upload=False)
+
+    monkeypatch.setattr(dlg_mod, "assert_local_dry_run_passed", fake_gate)
+    monkeypatch.setattr(dlg_mod, "record_gate_result", lambda *_a, **_k: None)
+    dlg._on_save()
+    assert seen.get("draft_only") is True
+    assert seen.get("goal_completed") is True
+
+
+def test_dialog_save_missing_goal_completed_does_not_upload(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from autopilot.authoring.gate import GateResult
+
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch)
+    dlg._draft = SimpleNamespace(session_verified=True, steps=[])
+    out = tmp_path / "authored" / "x.tc.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("type: testcase\n", encoding="utf-8")
+    seen: dict = {}
+    monkeypatch.setattr(dlg_mod, "save_draft_tc", lambda *_a, **_k: out)
+    monkeypatch.setattr(dlg_mod.QMessageBox, "information", lambda *_a, **_k: None)
+    monkeypatch.setattr(dlg, "accept", lambda: None)
+
+    def fake_gate(_path, **kw):
+        seen.update(kw)
+        return GateResult(ok=True, message="未完成", allow_upload=False)
+
+    monkeypatch.setattr(dlg_mod, "assert_local_dry_run_passed", fake_gate)
+    monkeypatch.setattr(dlg_mod, "record_gate_result", lambda *_a, **_k: None)
+    dlg._on_save()
+    assert seen.get("goal_completed") is False
+    assert seen.get("session_verified") is True
+
+
+def test_default_authoring_platform_includes_http():
+    from autopilot.ui.platform_labels import default_authoring_platform
+
+    assert default_authoring_platform("http") == "http"
+    assert default_authoring_platform("web") == "web"
+    assert default_authoring_platform("api") == "http"
+    assert default_authoring_platform("") == "auto"
+
+
+def test_dialog_plan_only_locks_draft_checkbox(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch, mode="plan_only")
+    assert dlg.chk_draft.isChecked() is True
+    assert dlg.chk_draft.isEnabled() is False
+    dlg.cmb_mode.setCurrentIndex(dlg.cmb_mode.findData("session"))
+    assert dlg.chk_draft.isEnabled() is True
+
+
+def test_dialog_try_page_keeps_committed_draft(tmp_path, monkeypatch):
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch)
+    committed = AuthoringDraft(
+        title="正式",
+        platform="ios",
+        steps=[GeneratedStep(keyword_id="mobile_element_click", params={"locator": "name::ok"})],
+        mode="session",
+        goal_completed=True,
+        session_verified=True,
+    )
+    dlg._committed_draft = committed
+    dlg._draft = committed
+    dlg._previewing_page = False
+    dlg._sync_save_cta()
+    assert dlg.btn_save.isEnabled()
+    assert dlg.btn_save.text() == "写入工程"
+
+    preview = AuthoringDraft(
+        title="预览",
+        platform="ios",
+        steps=[GeneratedStep(keyword_id="mobile_element_click", params={"locator": "name::x"})],
+        mode="try_page",
+        goal_completed=False,
+    )
+    monkeypatch.setattr(dlg, "_get_ctx", lambda: ExecutionContext())
+    monkeypatch.setattr(dlg_mod, "try_page_nl", lambda *_a, **_k: preview)
+    monkeypatch.setattr(
+        dlg_mod,
+        "resolve_nl_hints",
+        lambda *_a, **_k: (NlHints(platform="ios"), []),
+    )
+    dlg.ed_nl.setPlainText("点确定")
+    dlg._on_try_page()
+    assert dlg._committed_draft is committed
+    assert dlg._previewing_page is True
+    assert dlg.btn_save.isEnabled()
+    assert dlg._draft_to_save() is committed
+    assert dlg.lbl_badge.text() == "当前页预览"
+
+
+def test_dialog_incomplete_save_cta(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    dlg._committed_draft = AuthoringDraft(
+        title="未完成",
+        platform="web",
+        steps=[GeneratedStep(keyword_id="web_element_click", params={})],
+        mode="session",
+        goal_completed=False,
+        session_verified=True,
+    )
+    dlg._sync_save_cta()
+    assert dlg.btn_save.isEnabled()
+    assert dlg.btn_save.text() == "写入待核对草稿"
+
+
+def test_dialog_busy_locks_try_and_form(tmp_path, monkeypatch):
+    dlg, _ = _make_dialog(tmp_path, monkeypatch)
+    dlg._set_busy(True, action="write")
+    assert dlg.btn_gen.text() == "正在编写…"
+    assert not dlg.btn_gen.isEnabled()
+    assert not dlg.btn_try.isEnabled()
+    assert dlg.btn_stop.isEnabled()
+    assert not dlg.ed_nl.isEnabled()
+    dlg._set_busy(False)
+    assert dlg.btn_gen.isEnabled()
+    assert dlg.btn_try.isEnabled()
+    assert not dlg.btn_stop.isEnabled()
+    assert dlg.btn_gen.text() == "在设备上编写"
+
+
+def test_dialog_stop_during_prepare_skips_generate(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch, platform_data="web")
+    gen_hits: list[int] = []
+
+    def fake_prepare(req, **_kw):
+        dlg._cancel_event.set()
+        return SimpleNamespace(
+            request=req,
+            ctx=ExecutionContext(),
+            reused_ctx=False,
+            notes=["设备：U1"],
+        )
+
+    monkeypatch.setattr(dlg_mod, "prepare_authoring_session", fake_prepare)
+    monkeypatch.setattr(
+        dlg_mod, "generate_traditional_case", lambda *_a, **_k: gen_hits.append(1)
+    )
+    monkeypatch.setattr(
+        dlg_mod,
+        "resolve_nl_hints",
+        lambda *_a, **_k: (NlHints(platform="web", start_url="https://a.test"), []),
+    )
+    dlg.ed_nl.setPlainText("打开页面并登录")
+    dlg._on_generate()
+    assert gen_hits == []
+    assert dlg._generating is False
+    assert "已停止" in dlg.lbl_status.text()
+
+
+def test_dialog_empty_steps_http_labels_and_save_stays_open(tmp_path, monkeypatch):
+    from autopilot.authoring.gate import GateResult
+
+    dlg, dlg_mod = _make_dialog(tmp_path, monkeypatch)
+    assert dlg._steps_stack.currentWidget() is dlg._empty
+    headers = [
+        dlg.tbl.horizontalHeaderItem(i).text() for i in range(dlg.tbl.columnCount())
+    ]
+    assert headers == ["说明", "关键字", "参数"]
+
+    dlg.cmb_platform.setCurrentIndex(dlg.cmb_platform.findData("http"))
+    assert dlg._lbl_url.text() == "接口 Base URL"
+    assert not dlg.ed_package.isVisible()
+    dlg.cmb_platform.setCurrentIndex(dlg.cmb_platform.findData("web"))
+    assert dlg._lbl_url.text() == "起始页 URL"
+
+    accepted: list[int] = []
+    monkeypatch.setattr(dlg, "accept", lambda: accepted.append(1))
+    out = tmp_path / "authored" / "x.tc.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("type: testcase\n", encoding="utf-8")
+    monkeypatch.setattr(dlg_mod, "save_draft_tc", lambda *_a, **_k: out)
+    monkeypatch.setattr(
+        dlg_mod,
+        "assert_local_dry_run_passed",
+        lambda *_a, **_k: GateResult(ok=True, message="已写入", allow_upload=False),
+    )
+    monkeypatch.setattr(dlg_mod, "record_gate_result", lambda *_a, **_k: None)
+    dlg._committed_draft = AuthoringDraft(
+        title="完成",
+        platform="web",
+        steps=[GeneratedStep(keyword_id="web_element_click", params={})],
+        mode="session",
+        goal_completed=True,
+        session_verified=True,
+    )
+    dlg._sync_save_cta()
+    dlg._on_save()
+    assert accepted == []
+    assert dlg.saved_path() == str(out)
+    assert "已写入" in dlg.lbl_status.text()

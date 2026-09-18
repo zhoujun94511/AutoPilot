@@ -417,6 +417,9 @@ QLabel#empty_state_title { font-size: 15px; color: #9e9e9e; }
 QLabel#empty_state_hint { font-size: 12px; color: #9e9e9e; }
 QLabel#empty_state_title_compact { font-size: 13px; color: #757575; }
 QLabel#empty_state_hint_compact { font-size: 11px; color: #616161; }
+QWidget#empty_workspace {
+    background: #1e1e1e;
+}
 """
 
 PARAM_FORM_QSS = """
@@ -675,7 +678,16 @@ QDialog#ai_authoring_dialog QLabel#dialog_hint {
     padding: 0 0 4px 0;
 }
 QDialog#ai_authoring_dialog QLineEdit,
-QDialog#ai_authoring_dialog QComboBox,
+QDialog#ai_authoring_dialog QComboBox {
+    background: #1e1e1e;
+    color: #e0e0e0;
+    border: 1px solid #4b4b4b;
+    border-radius: 4px;
+    padding: 4px 6px;
+    min-height: 28px;
+    selection-background-color: #264f78;
+    selection-color: #ffffff;
+}
 QDialog#ai_authoring_dialog QPlainTextEdit {
     background: #1e1e1e;
     color: #e0e0e0;
@@ -697,6 +709,7 @@ QDialog#ai_authoring_dialog QLineEdit[readOnly="true"] {
 QDialog#ai_authoring_dialog QCheckBox {
     color: #cfd8dc;
     spacing: 6px;
+    min-height: 22px;
 }
 /* 保留 Fusion 原生上下箭头；不要为 QSpinBox 添加 border/padding。 */
 QDialog#ai_authoring_dialog QSpinBox {
@@ -739,8 +752,13 @@ QDialog#ai_authoring_dialog QPushButton#primary_action {
     border-color: #1976d2;
     font-weight: 600;
 }
-QDialog#ai_authoring_dialog QPushButton#primary_action:hover {
+QDialog#ai_authoring_dialog QPushButton#primary_action:hover:enabled {
     background: #1565c0;
+}
+QDialog#ai_authoring_dialog QPushButton#primary_action:disabled {
+    background: #37474f;
+    color: #78909c;
+    border-color: #455a64;
 }
 QDialog#ai_authoring_dialog QPushButton:disabled {
     background: #2a2a2a;
@@ -750,6 +768,59 @@ QDialog#ai_authoring_dialog QPushButton:disabled {
 QDialog#ai_authoring_dialog QLabel#authoring_status {
     color: #b0bec5;
     min-height: 18px;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_badge {
+    font-weight: 600;
+    padding: 0 8px 0 0;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_badge[badge_kind="done"] {
+    color: #81c784;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_badge[badge_kind="review"] {
+    color: #ffb74d;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_badge[badge_kind="plan"] {
+    color: #90caf9;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_badge[badge_kind="preview"] {
+    color: #ce93d8;
+}
+QDialog#ai_authoring_dialog QLabel#authoring_llm {
+    color: #9e9e9e;
+    font-size: 11px;
+}
+QDialog#ai_authoring_dialog QPushButton#authoring_stop {
+    color: #ef9a9a;
+    border-color: #c62828;
+}
+QDialog#ai_authoring_dialog QPushButton#authoring_stop:hover:enabled {
+    background: #3a2a2a;
+    border-color: #ef9a9a;
+}
+QDialog#ai_authoring_dialog QPushButton#authoring_stop:disabled {
+    color: #6e6e6e;
+    border-color: #3c3c3c;
+    background: #2a2a2a;
+}
+QDialog#ai_authoring_dialog QScrollArea#authoring_advanced_scroll {
+    background: transparent;
+    border: none;
+}
+QDialog#ai_authoring_dialog QToolButton#authoring_advanced {
+    background: transparent;
+    color: #b0bec5;
+    border: 1px solid #4b4b4b;
+    border-radius: 4px;
+    padding: 4px 10px;
+}
+QDialog#ai_authoring_dialog QToolButton#authoring_advanced:hover {
+    background: #37373d;
+    color: #e0e0e0;
+    border-color: #707070;
+}
+QDialog#ai_authoring_dialog QToolButton#authoring_advanced:checked {
+    background: #2d2d2d;
+    color: #e0e0e0;
 }
 """
 
@@ -762,6 +833,58 @@ QDialog#about_dialog QFrame#about_separator { color: #3c3c3c; }
 QDialog#about_dialog QLabel#about_fact_key { color: #9e9e9e; }
 QDialog#about_dialog QLabel#about_fact_value { color: #e0e0e0; }
 QDialog#about_dialog QLabel#about_copyright { color: #757575; font-size: 11px; }
+"""
+
+DIALOG_BUTTON_BAR_QSS = """
+QWidget#dialog_button_bar QPushButton {
+    background: #2d2d2d;
+    color: #e0e0e0;
+    border: 1px solid #505050;
+    border-radius: 4px;
+    padding: 5px 12px;
+    min-width: 72px;
+    font-size: 13px;
+}
+QWidget#dialog_button_bar QPushButton:hover {
+    background: #37373d;
+    border-color: #707070;
+}
+QWidget#dialog_button_bar QPushButton#dialog_btn_secondary {
+    background: #2d2d2d;
+    color: #e0e0e0;
+    border: 1px solid #505050;
+}
+QWidget#dialog_button_bar QPushButton#dialog_btn_primary {
+    background: #2d2d2d;
+    color: #90caf9;
+    border: 1px solid #1976d2;
+    font-weight: 600;
+}
+QWidget#dialog_button_bar QPushButton#dialog_btn_primary:hover {
+    background: #37373d;
+    border-color: #64b5f6;
+}
+QWidget#dialog_button_bar QPushButton#dialog_btn_danger {
+    background: #2d2d2d;
+    color: #ef9a9a;
+    border: 1px solid #c62828;
+    font-weight: 600;
+}
+QWidget#dialog_button_bar QPushButton#dialog_btn_danger:hover {
+    background: #3a2a2a;
+    border-color: #ef9a9a;
+}
+"""
+
+CONFIRM_DIALOG_QSS = """
+QDialog#confirm_dialog {
+    background: #2d2d2d;
+    color: #e0e0e0;
+}
+QDialog#confirm_dialog QLabel#confirm_text {
+    font-size: 13px;
+    color: #e0e0e0;
+}
 """
 
 DIALOG_FORM_QSS = """

@@ -96,6 +96,7 @@ def test_settled_capture_skips_splash(monkeypatch):
 
     cap = capture_settled_ui_context(object(), "ios", min_wait=4.5, timeout=15.0)
     assert cap["elements_text"] == "[home]"
+    assert cap["_meta"] == {"settled": True, "timed_out": False}
 
 
 def test_settled_capture_returns_last_on_timeout(monkeypatch):
@@ -111,3 +112,4 @@ def test_settled_capture_returns_last_on_timeout(monkeypatch):
     )
     cap = capture_settled_ui_context(object(), "ios", min_wait=100.0, timeout=3.0)
     assert cap["elements_text"] == "[busy]"
+    assert cap["_meta"] == {"settled": False, "timed_out": True}

@@ -44,8 +44,11 @@ def _normalize_locator_param(key: str, value: str, *, platform: str = "") -> str
 
 
 def _session_platform(ctx: Any) -> str:
-    """从移动会话管理器读平台；无会话返回空串。"""
+    """优先读统一上下文平台；兼容旧移动会话管理器。"""
     try:
+        current = str(ctx.get_var("__current_platform__") or "").strip().lower()
+        if current:
+            return current
         mgr = getattr(ctx, "appium", None)
         return str(getattr(mgr, "platform", "") or "").lower()
     except (AttributeError, TypeError):
@@ -84,6 +87,8 @@ def execute_keyword_step(step: GeneratedStep, ctx: Any) -> None:
     for key, val in (step.params or {}).items():
         raw = "" if val is None else str(val)
         raw = _normalize_locator_param(str(key), raw, platform=platform)
+        if str(key) in ("locator", "loc", "by") and isinstance(step.params, dict):
+            step.params[str(key)] = raw
         if hasattr(ctx, "resolve"):
             kwargs[str(key)] = ctx.resolve(raw)
         else:

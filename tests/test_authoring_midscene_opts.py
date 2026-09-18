@@ -9,17 +9,21 @@ from autopilot.authoring.codegen import save_draft_tc
 from autopilot.authoring.contract import AuthoringDraft, GeneratedStep
 from autopilot.authoring.locator_cache import PageLocatorCache, page_signature
 from autopilot.authoring.prompt import build_agent_turn_prompt
+from autopilot.authoring.registry_catalog import build_keyword_catalog
 from autopilot.authoring.turn_trace import (
     AUTHORING_TRACE_FILE,
     AuthoringTrace,
     TurnTraceRecord,
     read_authoring_trace,
+    trace_path_for_case,
     write_authoring_trace,
 )
 
 _filter_planned_steps = getattr(agent_mod, "_filter_planned_steps")
 _missing_assert_warning = getattr(agent_mod, "_missing_assert_warning")
 _nl_wants_assert = getattr(agent_mod, "_nl_wants_assert")
+_normalize_assertion_step = getattr(agent_mod, "_normalize_assertion_step")
+_preflight_locator_step = getattr(agent_mod, "_preflight_locator_step")
 
 
 def test_page_signature_order_independent():
@@ -27,6 +31,199 @@ def test_page_signature_order_independent():
     b = '[{"l":"name::b"},{"l":"id::a"}]'
     assert page_signature(a) == page_signature(b)
     assert page_signature(a) != page_signature('[{"l":"id::c"}]')
+
+
+def test_page_signature_distinguishes_same_locator_with_changed_semantics():
+    before = '[{"l":"id::row","tx":"商品 A","p":"0,100,100,40"}]'
+    after = '[{"l":"id::row","tx":"商品 B","p":"0,160,100,40"}]'
+    assert page_signature(before) != page_signature(after)
+
+
+def test_mobile_locator_safety_net_uses_fresh_live_tree(monkeypatch):
+    monkeypatch.setattr(
+        agent_mod,
+        "capture_ui_context",
+        lambda _ctx, _platform: {
+            "elements_text": '[{"l":"id::new","tx":"新页面"}]'
+        },
+    )
+    ok, reason, live_sig = _preflight_locator_step(
+        GeneratedStep("mobile_element_click", {"locator": "id::old"}),
+        ctx=object(),
+        platform="android",
+        expected_page_sig="old-signature",
+    )
+    assert ok is False
+    assert "page_drift" in reason
+    assert live_sig != "old-signature"
+
+
+def test_mobile_locator_safety_net_rejects_ambiguous_live_locator(monkeypatch):
+    page = (
+        '[{"l":"id::android:id/title","tx":"Wi-Fi","dup":2},'
+        '{"l":"id::android:id/title","tx":"About phone","dup":2}]'
+    )
+    monkeypatch.setattr(
+        agent_mod,
+        "capture_ui_context",
+        lambda _ctx, _platform: {"elements_text": page},
+    )
+    ok, reason, _live_sig = _preflight_locator_step(
+        GeneratedStep(
+            "mobile_element_click",
+            {"locator": "id::android:id/title"},
+        ),
+        ctx=object(),
+        platform="android",
+        expected_page_sig=page_signature(page),
+    )
+
+    assert ok is False
+    assert "locator_ambiguous" in reason
+
+
+def test_filter_skips_overlay_app_start():
+    start = GeneratedStep(
+        "mobile_app_start",
+        {"packageName": "com.android.permissioncontroller"},
+    )
+    click = GeneratedStep("mobile_element_click", {"locator": "id::allow"})
+    kept, skipped, _notes = _filter_planned_steps(
+        [start, click],
+        recorded=[],
+        page_locators={"id::allow"},
+        target_package="com.example.app",
+        current_packages=("com.android.permissioncontroller",),
+    )
+    assert [step.keyword_id for step in kept] == ["mobile_element_click"]
+    assert any("再次启动" in note for note in skipped)
+
+
+def test_filter_allows_switching_app_from_overlay():
+    start = GeneratedStep(
+        "mobile_app_start",
+        {"packageName": "com.other.app"},
+    )
+    kept, skipped, _notes = _filter_planned_steps(
+        [start],
+        recorded=[],
+        page_locators=set(),
+        target_package="com.example.app",
+        current_packages=("com.android.permissioncontroller",),
+    )
+    assert kept == [start]
+    assert skipped == []
+
+
+def test_filter_skips_restart_while_already_in_target():
+    start = GeneratedStep(
+        "mobile_app_start",
+        {"packageName": "com.example.app"},
+    )
+    kept, skipped, _notes = _filter_planned_steps(
+        [start],
+        recorded=[],
+        page_locators=set(),
+        target_package="com.example.app",
+        current_packages=("com.example.app",),
+    )
+    assert kept == []
+    assert any("再次启动" in note for note in skipped)
+
+
+def test_filter_skips_blank_app_start_on_overlay():
+    start = GeneratedStep("mobile_app_start", {})
+    kept, skipped, _notes = _filter_planned_steps(
+        [start],
+        recorded=[],
+        page_locators=set(),
+        target_package="com.example.app",
+        current_packages=("com.android.permissioncontroller",),
+    )
+    assert kept == []
+    assert any("再次启动" in note for note in skipped)
+
+
+def test_filter_skips_duplicate_http_session_begin():
+    first = GeneratedStep(
+        "http_session_begin",
+        {"base_url": "https://api.example.test"},
+    )
+    again = GeneratedStep(
+        "http_session_begin",
+        {"base_url": "https://api.example.test"},
+    )
+    kept, skipped, _notes = _filter_planned_steps(
+        [again],
+        recorded=[first],
+        page_locators=set(),
+    )
+    assert kept == []
+    assert any("重复入口" in note for note in skipped)
+
+
+def test_filter_keeps_first_app_start_when_page_empty():
+    start = GeneratedStep(
+        "mobile_app_start",
+        {"packageName": "com.example.app"},
+    )
+    kept, skipped, _notes = _filter_planned_steps(
+        [start],
+        recorded=[],
+        page_locators=set(),
+        target_package="com.example.app",
+        current_packages=(),
+    )
+    assert kept == [start]
+    assert skipped == []
+
+
+def test_filter_preserves_explicit_business_repeat():
+    click = GeneratedStep("mobile_element_click", {"locator": "id::buy"})
+    kept, skipped, _notes = _filter_planned_steps(
+        [click, click],
+        recorded=[],
+        page_locators={"id::buy"},
+        natural_language="购买两次",
+    )
+    assert kept == [click, click]
+    assert skipped == []
+
+
+def test_mobile_navigation_keywords_are_pinned_in_small_catalog():
+    expected = {
+        "mobile_presskey",
+        "mobile_swipe_direction",
+        "mobile_slip_for_element",
+        "mobile_element_text_clear",
+        "mobile_wait_element_visible",
+        "mobile_verify_element_existed",
+        "mobile_verify_element_visible",
+        "mobile_verify_element_text",
+    }
+    for platform in ("android", "ios"):
+        ids = {
+            item["id"]
+            for item in build_keyword_catalog(platform, max_items=12)
+        }
+        assert expected <= ids
+
+
+def test_assert_role_promotes_mobile_visibility_wait_to_verify():
+    step = GeneratedStep(
+        "mobile_wait_element_visible",
+        {"locator": "name::General", "isVisible": "true"},
+    )
+
+    note = _normalize_assertion_step(
+        step,
+        role="assert",
+        assertion_requested=True,
+    )
+
+    assert step.keyword_id == "mobile_verify_element_visible"
+    assert "断言规范化" in note
+    assert _missing_assert_warning([step], "验证 General 页面已打开") == ""
 
 
 def test_locator_cache_rewrites_stale_locator():
@@ -87,6 +284,14 @@ def test_missing_assert_warning_when_nl_asks_verify():
         )
     ]
     assert _missing_assert_warning(steps2, "打开开关并确认已开启") == ""
+    http_get = [GeneratedStep(keyword_id="http_get", params={"url": "/health"})]
+    http_warn = _missing_assert_warning(http_get, "调用健康检查", "http")
+    assert "http_assert" in http_warn
+    http_ok = http_get + [
+        GeneratedStep(keyword_id="http_assert_status", params={"expected": "200"})
+    ]
+    assert _missing_assert_warning(http_ok, "调用健康检查", "http") == ""
+    assert _missing_assert_warning(http_get, "打开页面", "ios") == ""
 
 
 def test_prompt_mentions_act_wait_assert():
@@ -203,6 +408,20 @@ def test_write_authoring_trace_accepts_dict(tmp_path):
     raw = json.loads((tmp_path / AUTHORING_TRACE_FILE).read_text(encoding="utf-8"))
     assert raw["title"] == "t"
     assert raw["case_file"] == "a.tc.yaml"
+
+
+def test_authoring_trace_isolated_per_case_and_reads_legacy(tmp_path):
+    first = tmp_path / "first.tc.yaml"
+    second = tmp_path / "second.tc.yaml"
+    first.write_text("type: testcase\n", encoding="utf-8")
+    second.write_text("type: testcase\n", encoding="utf-8")
+    write_authoring_trace(first, {"title": "first", "turns": []})
+    write_authoring_trace(second, {"title": "second", "turns": []})
+
+    assert trace_path_for_case(first).is_file()
+    assert trace_path_for_case(second).is_file()
+    assert read_authoring_trace(first)["title"] == "first"
+    assert read_authoring_trace(second)["title"] == "second"
 
 
 def test_vision_fallback_disabled_by_default(monkeypatch):

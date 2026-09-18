@@ -14,6 +14,16 @@ import re
 from dataclasses import dataclass
 
 
+#: 启动前置槽位。页面/开关/按钮等路径对象禁止再加字段——留给会话 Agent。
+NLHINT_FIELDS: tuple[str, ...] = (
+    "platform",
+    "app_name",
+    "package_name",
+    "start_url",
+    "input_texts",
+)
+
+
 @dataclass(frozen=True)
 class NlHints:
     platform: str = ""  # android|ios|web|http|""

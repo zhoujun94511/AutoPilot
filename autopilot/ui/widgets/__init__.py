@@ -16,6 +16,9 @@ from .mirror_panel import MirrorPanel
 from .auxiliary_region import RightAuxiliaryRegion
 from .search_results_panel import SearchResultsPanel
 from .welcome_panel import WelcomePanel
+from .empty_state import EmptyWorkspacePanel
+from .dialog_buttons import DialogButtonBar
+from .confirm_dialog import ConfirmDialog
 
 __all__ = [
     "RightAuxiliaryRegion",
@@ -34,4 +37,7 @@ __all__ = [
     "TestPlanEditor",
     "SearchResultsPanel",
     "WelcomePanel",
+    "EmptyWorkspacePanel",
+    "DialogButtonBar",
+    "ConfirmDialog",
 ]

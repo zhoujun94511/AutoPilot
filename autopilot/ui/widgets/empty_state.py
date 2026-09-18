@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from ..actions import qicon
-from ..theme import init_panel_style, resolve_theme
+from ..theme import apply_panel_theme, init_panel_style, resolve_theme, semantic_color
 
 
 class EmptyState(QWidget):
@@ -52,15 +52,11 @@ class EmptyState(QWidget):
         self.apply_theme(self._theme)
 
     def apply_theme(self, theme: str) -> None:
-        from ..theme import apply_panel_theme
-
         self._theme = resolve_theme(theme)
         apply_panel_theme(self, "empty_state", self._theme)
         self._refresh_icon()
 
     def _refresh_icon(self) -> None:
-        from ..theme import semantic_color
-
         mid = semantic_color("mid", self._theme)
         ic = qicon(self._icon_name, color=mid)
         if ic is not None:
@@ -76,3 +72,52 @@ class EmptyState(QWidget):
         self._hint.setText(hint)
         self._hint.setVisible(bool(hint))
         self._refresh_icon()
+
+
+class EmptyWorkspacePanel(QWidget):
+    """工程已打开、但没有文档标签时的空编辑区（对标 VS Code / IntelliJ 空编辑器组）。
+
+    与欢迎页分离：欢迎页只用于「尚未打开工程」。
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("empty_workspace")
+        self._theme = "light"
+        self._icon_name = "mdi6.file-document-outline"
+
+        lay = QVBoxLayout(self)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.setSpacing(10)
+        lay.setContentsMargins(24, 24, 24, 24)
+
+        self._icon = QLabel()
+        self._icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._title = QLabel("未打开文件")
+        self._title.setObjectName("empty_state_title")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint = QLabel("从左侧工程树双击打开用例")
+        self._hint.setObjectName("empty_state_hint")
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._hint.setWordWrap(True)
+
+        lay.addStretch(1)
+        lay.addWidget(self._icon)
+        lay.addWidget(self._title)
+        lay.addWidget(self._hint)
+        lay.addStretch(1)
+
+        self._theme = init_panel_style(self, "empty_state")
+        self.apply_theme(self._theme)
+
+    def apply_theme(self, theme: str) -> None:
+        self._theme = resolve_theme(theme)
+        apply_panel_theme(self, "empty_state", self._theme)
+        mid = semantic_color("mid", self._theme)
+        ic = qicon(self._icon_name, color=mid)
+        if ic is not None:
+            self._icon.setPixmap(ic.pixmap(52, 52))
+            self._icon.show()
+        else:
+            self._icon.hide()
+

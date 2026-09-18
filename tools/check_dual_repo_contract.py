@@ -20,6 +20,11 @@ from pathlib import Path
 from typing import cast
 
 
+def _normalized_source_bytes(path: Path) -> bytes:
+    """忽略不同 checkout 策略造成的 CRLF/LF，其余字节保持严格比较。"""
+    return path.read_bytes().replace(b"\r\n", b"\n")
+
+
 def _major_minor(value: str) -> tuple[str, str]:
     """公开契约比较：剥掉 v / -vendored 后取 major.minor。"""
     raw = (value or "").strip().lower().removeprefix("v")
@@ -48,7 +53,7 @@ def _check_pkg_file_sync(
         if not b.is_file():
             missing.append(f"Platform缺 {rel}")
             continue
-        if a.read_bytes() != b.read_bytes():
+        if _normalized_source_bytes(a) != _normalized_source_bytes(b):
             mismatched.append(rel)
     if missing or mismatched:
         parts = []
@@ -345,6 +350,9 @@ def check_engine_core_sync(ide_root: Path, platform_root: Path) -> None:
         "engine/run/config.py",
         "engine/run/parallel.py",
         "engine/run/sequential.py",
+        "mobile/ios_ports.py",
+        "runtime/http_ssl.py",
+        "runtime/paths.py",
         "runtime/port_allocator.py",
         "runtime/device_runtime.py",
         "runtime/device_session.py",
@@ -498,6 +506,7 @@ def check_platform_ap_runtime_deps(platform_root: Path) -> None:
         "mgmt/status_sync.py",
         "mgmt/auth_api.py",
         "mgmt/client.py",
+        "runtime/http_ssl.py",
         "inspector/__init__.py",
         "inspector/tree.py",
     )
@@ -524,12 +533,21 @@ def check_platform_ap_runtime_deps(platform_root: Path) -> None:
         ):
             a = ide_mgmt / name
             b = ap / "mgmt" / name
-            if a.is_file() and b.is_file() and a.read_bytes() != b.read_bytes():
+            if (
+                a.is_file()
+                and b.is_file()
+                and _normalized_source_bytes(a) != _normalized_source_bytes(b)
+            ):
                 raise RuntimeError(f"Platform ap/mgmt/{name} 与 IDE 内容不一致")
         # inspector/tree 与 IDE 同步
         ide_tree = ide_root_guess / "autopilot" / "inspector" / "tree.py"
         plat_tree = ap / "inspector" / "tree.py"
-        if ide_tree.is_file() and plat_tree.is_file() and ide_tree.read_bytes() != plat_tree.read_bytes():
+        if (
+            ide_tree.is_file()
+            and plat_tree.is_file()
+            and _normalized_source_bytes(ide_tree)
+            != _normalized_source_bytes(plat_tree)
+        ):
             raise RuntimeError("Platform ap/inspector/tree.py 与 IDE 内容不一致")
 
     import importlib
@@ -635,6 +653,77 @@ def check_jsonschema_sync(ide_root: Path, platform_root: Path) -> None:
         )
 
 
+def _module_literal(path: Path, name: str) -> str | int:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in tree.body:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+                value = node.value
+                if value is not None:
+                    literal = ast.literal_eval(cast(ast.AST, value))
+                    if isinstance(literal, (str, int)):
+                        return literal
+                    raise RuntimeError(
+                        f"{path} 常量 {name} 不是 str/int：{type(literal).__name__}"
+                    )
+    raise RuntimeError(f"{path} 缺常量 {name}")
+
+
+def check_ai_codegen_wire_semantics(ide_root: Path, platform_root: Path) -> None:
+    """链路 3 的输入上限和 wire major 必须与公开 schema 对齐。"""
+    schema = json.loads(
+        (
+            platform_root
+            / "contracts"
+            / "jsonschema"
+            / "ai_codegen_wire.v1.json"
+        ).read_text(encoding="utf-8")
+    )
+    schema_max = int(schema["$defs"]["request"]["properties"]["prompt"]["maxLength"])
+    ide_max = int(
+        _module_literal(
+            ide_root / "autopilot" / "authoring" / "llm_client.py",
+            "MAX_PROMPT_CHARS",
+        )
+    )
+    platform_max = int(
+        _module_literal(
+            platform_root
+            / "autopilot_platform"
+            / "platform"
+            / "api"
+            / "ops.py",
+            "MAX_AI_PROMPT_CHARS",
+        )
+    )
+    ide_wire = str(
+        _module_literal(
+            ide_root / "autopilot" / "mgmt" / "client.py",
+            "AI_CODEGEN_WIRE_VERSION",
+        )
+    )
+    platform_wire = str(
+        _module_literal(
+            platform_root
+            / "autopilot_platform"
+            / "platform"
+            / "api"
+            / "ops.py",
+            "AI_CODEGEN_WIRE_VERSION",
+        )
+    )
+    if len({schema_max, ide_max, platform_max}) != 1:
+        raise RuntimeError(
+            "AI codegen prompt 上限不一致："
+            f"schema={schema_max}, IDE={ide_max}, Platform={platform_max}"
+        )
+    if ide_wire.split(".", 1)[0] != platform_wire.split(".", 1)[0]:
+        raise RuntimeError(
+            f"AI codegen wire major 不一致：IDE={ide_wire}, Platform={platform_wire}"
+        )
+
+
 def check_contracts_version_file(ide_root: Path, platform_root: Path) -> None:
     """AUD-2026-16：公开契约 VERSION 双仓镜像（RUNTIME_PIN 仍仅 Platform）。"""
     ide_v = ide_root / "contracts" / "VERSION"
@@ -693,6 +782,7 @@ def check_contracts(ide_root: Path, platform_root: Path) -> None:
             f"Platform-only={sorted(platform_caps - ide_caps)}"
         )
     check_jsonschema_sync(ide_root, platform_root)
+    check_ai_codegen_wire_semantics(ide_root, platform_root)
     check_http_keyword_sync(ide_root, platform_root)
     check_job_platforms_sync(ide_root, platform_root)
     check_web_keyword_sync(ide_root, platform_root)

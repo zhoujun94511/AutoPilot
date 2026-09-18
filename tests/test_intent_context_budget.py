@@ -246,6 +246,63 @@ def test_serialize_elements_modes():
     assert off == []
 
 
+def test_duplicate_primary_locator_uses_unique_semantic_fallback():
+    rows = serialize_elements(
+        [
+            {
+                "platform": "android",
+                "tag": "TextView",
+                "text": "Wi-Fi",
+                "resource_id": "android:id/title",
+                "locators": {
+                    "id": "android:id/title",
+                    "xpath": '//*[@text="Wi-Fi"]',
+                },
+            },
+            {
+                "platform": "android",
+                "tag": "TextView",
+                "text": "About phone",
+                "resource_id": "android:id/title",
+                "locators": {
+                    "id": "android:id/title",
+                    "xpath": '//*[@text="About phone"]',
+                },
+            },
+        ],
+        mode="compact",
+    )
+
+    assert [row["l"] for row in rows] == [
+        'xpath:://*[@text="Wi-Fi"]',
+        'xpath:://*[@text="About phone"]',
+    ]
+    assert all("dup" not in row for row in rows)
+
+
+def test_duplicate_locator_without_unique_fallback_is_marked_ambiguous():
+    rows = serialize_elements(
+        [
+            {
+                "platform": "android",
+                "tag": "TextView",
+                "text": "Item",
+                "locators": {"id": "android:id/title"},
+            },
+            {
+                "platform": "android",
+                "tag": "TextView",
+                "text": "Item",
+                "locators": {"id": "android:id/title"},
+            },
+        ],
+        mode="compact",
+    )
+
+    assert [row["l"] for row in rows] == ["id::android:id/title"] * 2
+    assert [row["dup"] for row in rows] == [2, 2]
+
+
 def test_build_vision_payload_no_base64_in_text(monkeypatch):
     png = _fake_png(640, 960)
 

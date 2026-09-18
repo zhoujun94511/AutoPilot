@@ -2,7 +2,20 @@
 
 from __future__ import annotations
 
-from autopilot.authoring.nl_parse import parse_nl_hints
+from dataclasses import fields
+
+from autopilot.authoring.nl_parse import NLHINT_FIELDS, NlHints, parse_nl_hints
+
+
+def test_nlhints_stays_bootstrap_slots_only():
+    assert tuple(item.name for item in fields(NlHints)) == NLHINT_FIELDS
+    assert NLHINT_FIELDS == (
+        "platform",
+        "app_name",
+        "package_name",
+        "start_url",
+        "input_texts",
+    )
 
 
 def test_parse_settings_app_not_blocked():

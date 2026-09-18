@@ -96,14 +96,14 @@ AUTOPILOT_PLATFORM_URL / platform.url（部署，默认锁定）
 显式 `AUTOPILOT_AUTHORING_LLM_MODE` 始终优先于锁定推断。
 `settings.json` **不存**厂商 Key。
 
-**Intent Vision 密钥边界（与链路 3 对齐）**：锁定 Platform URL 的企业分发下，默认**忽略**本机 Vision Key（避免「编写走 Platform、Vision 却散落用户 `.env`」）。企业默认保持 `AUTOPILOT_INTENT_VISION=0`；若受管 Runner 需 Vision，由 IT 注入 Key 并设 `AUTOPILOT_VISION_ALLOW_LOCAL_KEY=1`。未锁定 URL 的本机开发不受影响。
+**Intent Vision 密钥边界（与链路 3 对齐）**：锁定 Platform URL 时默认忽略本机 Vision Key。`AUTOPILOT_INTENT_VISION=1` **仅 IDE 自动化**（Intent 自愈/编写 Vision 兜底）；Platform codegen **不用** Vision。DeepSeek 配 `DEEPSEEK_MODEL=v4-flash` 时，Intent Vision 识图**自动升** `-vision-exp`（**仅 DeepSeek**；OpenAI/Gemini/千问不变）。
 
 ### Token 消耗护栏（IDE 侧）
 
 | 机制 | 说明 |
 |------|------|
 | 调用前预检 | 已登录时自动走平台持钥网关；读取 `/ops/ai/capabilities` 确认模型可用，该请求不调用厂商、不耗 token |
-| 图片能力 | DeepSeek 等文本模型自动标记 `text_only_ui_tree`；链路 3 只发送压缩 UI 树，不上传截图。Intent Vision 的 `auto` 模式也会跳过图片 |
+| 图片能力 | 链路 3 codegen 只发 DOM 文本。Intent Vision（须 `AUTOPILOT_INTENT_VISION=1`）：DeepSeek 自动升 `-vision-exp` 传截图；其它厂商按所配 VL 型号 |
 | 并发互斥 | AI 编写对话框同一时刻只跑一轮，重复点击无效 |
 | prompt 上限 | 单次 60000 字符（与 Platform 一致），超限本地拦截 |
 | 上下文预算 | 关键字目录去掉展示字段；每回合只带最近 6 步历史，页面摘要截断到 12000 字符 |
@@ -122,19 +122,24 @@ AUTOPILOT_PLATFORM_URL / platform.url（部署，默认锁定）
 | 多设备 | 多台在线时弹窗选一台（取消即中止）；无 UI 回调的 CLI 场景取第一台 ready |
 | 首轮采页 | 启动 App 后等页面稳定再采（默认最少 4.5s、最多 15s），避免把启动页喂给模型白烧一轮 |
 | NL 前置线索 | 对话框槽位优先 → 一次 LLM 结构化抽取（仅 platform/app/package/url/inputs）→ 正则兜底。`AUTOPILOT_AUTHORING_NL_LLM=0` 可强制只用正则。不把整条操作路径做成关键字匹配。平台支持 **Android / iOS / Web**（有 URL 且未点明移动端时倾向 web） |
-| 页面摘要语义 | 跨平台统一 ``ck``（可点）/ ``ed``（可输入）；摘要带屏幕尺寸（优先 driver 窗口）与 ``p=x,y,宽,高``。控件名不可轻信，结合方位与文案语义选型 |
-| 观察-执行 | 借鉴 Midscene：点击/启动/打开等可能改页动作执行后立即重采页再规划；摘要外定位符默认拒绝 |
+| 页面摘要语义 | 跨平台统一 ``ck``（可点）/ ``ed``（可输入）；`page_sig` 同时纳入 locator、文本、角色、交互性与位置摘要，避免同模板不同内容碰撞。摘要带屏幕尺寸（优先 driver 窗口）与 ``p=x,y,宽,高`` |
+| 观察-执行 | 借鉴 Midscene/Artemis：首轮及 pending transition 后动态等待页面稳定；稳定等待超时会标记 `settlement_timeout`，不得用最后一张中间态结算 transition。所有移动端改页点击（包括缺少 `action_role` 的旧响应）必须待新页有效指纹确认后才固化 |
+| 执行 Safety Net | Android/iOS/Web 的点击、输入与清空等 locator 动作在调用 REGISTRY 前重新采集 live tree/DOM；页面指纹漂移会短重试并分类为 `page_drift`，同页 locator 消失分类为 `locator_missing`，均不执行、不固化 |
+| 深层导航 | Android/iOS/Web 使用“搜索优先 → 分类兜底 → 滚动发现 → 目标动作 → 断言”的轻量状态机；仅 incident 可推动策略切换并记录 `tried_strategies`，模型不能任意跳过漏斗策略 |
+| 回退与净化 | 移动端 `mobile_presskey(oKeys=back)` 或 Web `web_browser_back` 返回历史页面签名时自动裁掉错误分支及返回动作；移动端同 frame 同质滑动可归一化，Web `web_browser_scroll_vertical_bar` 保留原步骤交给 Selenium/Playwright 适配层 |
 | 定位两阶段 | 可用 `params.target` / comment 先解析页摘要 ``l``；`AUTOPILOT_AUTHORING_DEEP_THINK=1` 时启发式失败再打一次定位 LLM |
 | Vision 兜底 | 默认关。采页为空且 `AUTOPILOT_AUTHORING_VISION_FALLBACK=1`、同时 Intent Vision 已开时，把 Vision 候选压成摘要再规划（仍落传统关键字；受 `AUTOPILOT_VISION_MAX_CALLS_PER_CASE` 约束） |
-| 分模型 | 本机 / Platform：`AP_AI_PLANNING_MODEL`（规划/编写/NL）、`AP_AI_LOCATE_MODEL`（深度定位）；未配则回落 `AP_AI_MODEL`。Platform codegen 按 `purpose` 选模 |
+| 分模型 | Platform codegen：`AP_AI_PLANNING_MODEL` / `AP_AI_LOCATE_MODEL`（文本）。Intent Vision 独立走 `vision_model()`，**不读** `AP_AI_LOCATE_MODEL` |
 | 试跑当前页 | 对话框「试跑当前页」：复用检视器会话、最多 1 回合，仅预览不落盘 |
-| 决策轨迹 | 保存草稿时写入 `authored/_authoring_trace.json`（页签名、计划/执行/缓存命中） |
+| 决策轨迹 | 保存草稿时写入逐用例 `<case>.authoring.trace.json`（前后页签名、导航角色、pending、incident、裁剪与 replay）；`_authoring_trace.json` 仅保留为最近一次兼容别名 |
 | 正式落盘 | 链路 3 草稿经 `TestCase` + `save_testcase` 写出（顶层 `name`、标准字段、按关键字元数据补默认参数），与链路 1 正式 `.tc.yaml` 对齐 |
 | 采页取证 | `python tools/diag_authoring_capture.py [自然语言] [max_elements]` 打印模型实际看到的控件树。真机 smoke/e2e 默认用系统设置作通用锚点，不绑定商业 App；可用参数覆盖任意场景 |
-| 试跑门禁 | 会话驱动逐步执行成功**且 AI 宣告已达成需求**才记为已验证；回合耗尽/中途卡住时即便每步都跑通也不放行（步骤能跑通不等于符合需求），需人工核对并本地 F5 |
-| 步骤净化 | 同一包名/URL 的入口关键字只落一次（跨 App 允许再次入口）；截图步骤仅当用户明确要求留证时写入；摘要外定位符默认拒绝 |
+| 试跑门禁 | 会话驱动逐步执行成功、AI 宣告已达成需求且没有 pending/incident/stop reason 才记为已验证。裁剪或滚动归一化后从 `mobile_app_start` 逐边重放并核对各层 `page_sig`，到达 `target-ready` 后执行 terminal target 一次，再稳定采集结果页并确认页面语义发生变化；任一检查失败都不记为已验证 |
+| 步骤净化 | 同一包名/URL 的入口关键字只落一次（跨 App 允许再次入口）；截图步骤仅当用户明确要求留证时写入；摘要外定位符默认拒绝；需求明确含“两次/重复”等业务语义时保留实际执行的重复步骤 |
 | 门禁落盘 | 结论写 `authored/_authoring.json`；上传工程时未验证草稿必须人工确认——AI 生成的用例是否符合预期只有人能判定，故不做机器硬拦截 |
-| 应用目录 | 分层解析（企业自定义优先，对齐 Midscene `appNameMapping`）：`AUTOPILOT_AUTHORING_APP_ALIASES_FILE` → 系统多语言目录 → 热门第三方候选 → 设备显示名模糊匹配。目录命中后按候选包校验已装列表；第三方禁止臆测已安装；仅稳定系统 Bundle 可回落 |
+| 应用目录 | 分层解析（企业自定义优先，对齐 Midscene `appNameMapping`）：`AUTOPILOT_AUTHORING_APP_ALIASES_FILE` → 系统多语言目录 → 热门第三方候选 → 设备显示名模糊匹配。目录命中后按候选包校验已装列表；第三方禁止臆测已安装；仅稳定系统 Bundle 可回落。多个候选分数接近时 IDE 会弹窗择一；解析失败时展示 Top-N 已装应用供选择 |
+| 当前前台应用 | AI 编写对话框勾选「使用当前前台应用」：跳过包名解析与 `mobile_app_start`，适用于检视器已打开目标 App 的场景；若最终路径经过错误分支裁剪或滚动归一化，因无法恢复确定入口而保持待本地 F5 验证 |
+| Web 双引擎编写 | Web 必须由 `start_url` + `web_browser_open` 建立确定起点，不沿用检视器任意历史页；会话注入 `__web_engine__`、`__web_browser__`、`__current_platform__=web`，Authoring 不直接依赖 Selenium/Playwright 类型 |
 | 应用名探测 | `AUTOPILOT_AUTHORING_LABEL_PROBES`（默认 12）：Android 未命中目录时最多探测多少个应用显示名；探测顺序为「目录候选包 → LAUNCHER → 已装列表」。Android 设置优先 `SETTINGS` intent |
 | 显示名缓存 | Android 显示名双级缓存：内存 + `~/.autopilot/android_app_labels.json`（可用 `AUTOPILOT_AUTHORING_LABEL_CACHE` 指定路径，或 `0` 关闭）；减少重复 dumpsys/APK pull |
 | 资源回收 | 对话框关闭/重写时：自建会话关移动 driver + 浏览器；复用检视器会话只清临时包名、不关 driver。共享 Appium 服务由主窗口管理，编写结束不杀 |

@@ -62,7 +62,7 @@ PLATFORM_KEYWORD_PREFIXES: dict[str, tuple[str, ...]] = {
     "android": ("mobile_", "public_", "common_"),
     "ios": ("mobile_", "ios_", "public_", "common_"),
     "web": ("web_", "browser_", "public_", "common_"),
-    "http": ("http_", "json_", "xml_", "public_", "common_"),
+    "http": ("http_", "json_", "xml_", "api_", "public_", "common_"),
 }
 
 
@@ -82,6 +82,8 @@ class AuthoringRequest:
     activity_name: str = ""
     start_url: str = ""
     app_label: str = ""
+    #: 使用设备当前前台应用：跳过包名解析与自动启动（适用于已开检视器/手动打开 App）
+    use_current_app: bool = False
     #: NL / 结构化抽取得到的待输入文本（账号、关键词等）
     input_texts: tuple[str, ...] = ()
     #: 工程目录：空平台时读工程默认平台，避免硬回落到 iOS
@@ -100,6 +102,83 @@ class GeneratedStep:
             "params": dict(self.params),
             "comment": self.comment,
         }
+
+
+NavigationRole = Literal[
+    "navigate",
+    "scroll",
+    "backtrack",
+    "target",
+    "assert",
+    "support",
+]
+
+
+@dataclass
+class NavigationPlan:
+    """UI 深层导航的机读计划；不替代最终关键字步骤。"""
+
+    goal: str
+    platform: str = ""
+    strategies: tuple[str, ...] = (
+        "search_first",
+        "category_fallback",
+        "scroll_discover",
+        "target_action",
+        "assert",
+    )
+    active_strategy: str = "search_first"
+    max_depth: int = 8
+    max_scrolls: int = 12
+    max_backtracks: int = 5
+    max_perception_failures: int = 2
+    visited_pages: int = 0
+    tried_strategies: list[str] = field(default_factory=list)
+
+
+@dataclass
+class NavigationFrame:
+    """到达某页时最终路径已有的步骤数，用于返回后裁掉错误分支。"""
+
+    page_sig: str
+    path_length: int
+    depth: int
+
+
+@dataclass
+class NavigationIncident:
+    """从执行反馈回灌下一回合的结构化故障。"""
+
+    kind: str
+    reason: str
+    role: NavigationRole
+    keyword_id: str = ""
+    page_sig_before: str = ""
+    page_sig_after: str = ""
+    consecutive_failures: int = 1
+    evidence: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "reason": self.reason,
+            "role": self.role,
+            "keyword_id": self.keyword_id,
+            "page_sig_before": self.page_sig_before,
+            "page_sig_after": self.page_sig_after,
+            "consecutive_failures": self.consecutive_failures,
+            "evidence": dict(self.evidence),
+        }
+
+
+@dataclass
+class PendingTransition:
+    """已派发但尚待下一次采页确认后果的导航动作。"""
+
+    step: GeneratedStep
+    role: NavigationRole
+    page_sig_before: str
+    target_locator: str = ""
 
 
 @dataclass

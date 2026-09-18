@@ -53,6 +53,12 @@ def test_marketing_name() -> bool:
     ok = (
         marketing_name("iPhone17,3") == "iPhone 16"
         and marketing_name("iPhone18,1") == "iPhone 17 Pro"
+        and marketing_name("iPhone19,2") == "iPhone 18 Pro"
+        and marketing_name("iPhone19,3") == "iPhone 18 Pro Max"
+        and marketing_name("iPhone19,4") == "iPhone Duo"
+        and marketing_name("iPhone19,7") == "iPhone 18 Pro Max"
+        # Apple 已登记但尚无可靠公开型号映射时，必须保留 ProductType，不能猜名称。
+        and marketing_name("iPhone19,1") == "iPhone19,1"
         and marketing_name("iPhone99,9") == "iPhone99,9"
     )
     print("iOS ProductType 营销名:", "✅" if ok else "❌")

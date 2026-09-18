@@ -32,7 +32,7 @@ def assert_local_dry_run_passed(
     draft_only: bool = False,
     runner: RunCaseFn | None = None,
     session_verified: bool = False,
-    goal_completed: bool = True,
+    goal_completed: bool = False,
 ) -> GateResult:
     """生成后校验：验证过才允许上传批跑；draft_only 仅保存草稿。
 
