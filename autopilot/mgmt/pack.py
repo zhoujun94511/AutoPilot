@@ -68,7 +68,6 @@ _SKIP_SUFFIXES = (
     ".doc",
     ".docx",
     ".xls",
-    ".xlsx",
     ".ppt",
     ".pptx",
     ".mp4",
@@ -89,6 +88,11 @@ _INCLUDE_SUFFIXES = (
     ".tp.yaml",
     ".map.yaml",
     ".ks.yaml",
+    ".tc",
+    ".ts",
+    ".tp",
+    ".map",
+    ".ks",
     ".yaml",
     ".yml",
     ".properties",
@@ -103,15 +107,29 @@ _INCLUDE_SUFFIXES = (
     ".json",
     ".xml",
     ".txt",
+    ".xlsx",
+    ".xlsm",
 )
 
 # 单文件上限，防止误放巨大媒体/安装包漏网
 _MAX_FILE_BYTES = 25 * 1024 * 1024
 
 
+def skipped_large_file_warnings(skipped: list[str]) -> list[str]:
+    """超过单文件上限、未打入制品的路径。整包仍成功，调用方负责提示。"""
+    if not skipped:
+        return []
+    shown = skipped[:5]
+    lines = [f"已跳过超过 25MB 的文件：{path}" for path in shown]
+    extra = len(skipped) - len(shown)
+    if extra:
+        lines.append(f"另有 {extra} 个文件超过 25MB，未打入制品")
+    return lines
+
+
 def _is_included_file(filename: str) -> bool:
     lower = filename.lower()
-    if lower.startswith(".") or lower in ("thumbs.db", "desktop.ini"):
+    if lower.startswith(".") or lower in ("thumbs.db", "desktop.ini", "manifest.json"):
         return False
     if any(lower.endswith(s) for s in _SKIP_SUFFIXES):
         return False
@@ -126,6 +144,7 @@ def zip_project_dir(
     artifact_version: str = "",
     required_runtime_version: str = "",
     write_manifest: bool = True,
+    skipped: list[str] | None = None,
 ) -> bytes:
     """打包工程中远程批跑必要文件；默认写入 ArtifactManifest（manifest.json）。"""
     root = os.path.abspath(project_dir)
@@ -166,11 +185,13 @@ def zip_project_dir(
                 if fn.lower() == "manifest.json":
                     continue
                 full = os.path.join(dirpath, fn)
+                rel = os.path.relpath(full, root).replace("\\", "/")
                 try:
                     if os.path.getsize(full) > _MAX_FILE_BYTES:
+                        if skipped is not None:
+                            skipped.append(rel)
                         continue
                 except OSError:
                     continue
-                rel = os.path.relpath(full, root).replace("\\", "/")
                 zf.write(full, f"{name}/{rel}")
     return buf.getvalue()

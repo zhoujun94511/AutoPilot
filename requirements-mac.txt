@@ -88,7 +88,7 @@ pyimg4==0.8.8
 pyiosbackup==0.2.4
 pykdebugparser==1.2.7
 pylzss==0.3.4
-pymobiledevice3==9.30.1
+pymobiledevice3==11.17.0
 PyQt6==6.11.0
 PyQt6-Qt6==6.11.1
 PyQt6_sip==13.11.1

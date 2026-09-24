@@ -242,7 +242,8 @@ class MgmtRunnerWebMixin(_Base):
             n_dev = 0
         if n_dev:
             self.console.log(
-                f"已启动本机 Runner：{rid} → {server}；当前探测到 {n_dev} 台设备，将心跳上报 TR 池",
+                f"已启动本机 Runner：{rid} → {server}；当前探测到 {n_dev} 台设备，"
+                "将作为当前账号的私人测试机心跳上报",
                 "管理台",
             )
         else:

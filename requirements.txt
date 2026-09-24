@@ -15,7 +15,7 @@ pyaxmlparser>=0.3
 opencv-python-headless>=4.9
 numpy>=1.26
 cryptography>=42.0
-pymobiledevice3>=4.0
+pymobiledevice3>=11.17.0
 psutil>=5.9
 PyYAML>=6.0
 

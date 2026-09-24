@@ -1,9 +1,9 @@
 """iOS 实时镜像视频源策略（可插拔、与 WDA/Appium 控制解耦）。
 
-高帧画面（仅 Mac）：
-  - **AVFoundation 原生采集**（``ios-avf-capture`` + CoreMediaIO）：消费系统采集
-    设备（与 QuickTime 同源），与 go-ios/WDA 控制共存，不抢占 USB 接口。
-  - Win/Linux：无高帧路径，走 WDA MJPEG 9100 / 截图轮询。
+高帧画面：
+  - **macOS**：AVFoundation 原生采集（``ios-avf-capture`` + CoreMediaIO），与 WDA 共存。
+  - **Windows / Linux + iOS 27+**：CoreDevice HEVC（``IOS_HEVC=0`` 可关）。失败回 WDA MJPEG。
+  - 其余：WDA MJPEG 9100 / 截图轮询。
 
 历史备注：早期尝试过 QVH（ws-qvh / libusb 抓 QuickTime USB H.264），但现代 macOS 的
 CoreMediaIO DriverKit 扩展会独占 QuickTime 采集接口，libusb 无法 claim
@@ -50,10 +50,19 @@ def mirror_source_from_env() -> str:
     return normalize_mirror_source(raw) if raw else ""
 
 
+def mirror_source_intent(mode: str = "") -> str:
+    """用户要的 auto 或显式 mjpeg。环境变量优先。不按主机把 auto 收成 mjpeg。"""
+    env_mode = mirror_source_from_env()
+    if env_mode:
+        return env_mode
+    return normalize_mirror_source(mode)
+
+
 def resolve_mirror_source(mode: str = "", host: str = "") -> str:
     """解析镜像视频源意图（不含 helper 是否装好的探测）。
 
-    auto：Mac → 优先 AVFoundation 高帧；Win/Linux → 等价 mjpeg（无高帧路径）。
+    auto：Mac → 优先 AVFoundation。Win/Linux 的画面回退仍是 mjpeg，
+    但 iOS 27 HEVC 另由 can_try_hevc_mirror 判断，不读这个收窄后的结果。
     """
     env_mode = mirror_source_from_env()
     if env_mode:
@@ -132,6 +141,20 @@ def wants_highfps_video(mode: str = "", host: str = "") -> bool:
 def can_try_avf_mirror(mode: str = "", host: str = "") -> bool:
     """Mac 上高帧意图 + AVFoundation helper 就绪 → 走原生采集。"""
     return wants_highfps_video(mode, host=host) and avf_capture_available(host=host)
+
+
+def can_try_hevc_mirror(mode: str = "", host: str = "", ios_version: str = "") -> bool:
+    """非 Mac 的 auto，且设备为 iOS 27+、本机库能开 CoreDevice 流。
+
+    显式 ``mjpeg`` 与 macOS（已有 AVFoundation）不走这里。
+    """
+    if mirror_source_intent(mode) != MIRROR_AUTO:
+        return False
+    if (host or host_os()) == "mac":
+        return False
+    from .ios_hevc import hevc_api_available, hevc_enabled_by_env, hevc_supported_ios
+
+    return hevc_enabled_by_env() and hevc_supported_ios(ios_version) and hevc_api_available()
 
 
 _capture_active = False

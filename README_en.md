@@ -17,7 +17,7 @@
 
 </div>
 
-AutoPilot is a professional desktop IDE for test engineering teams. It unifies keyword-driven automation across web, mobile, API, data, and middleware layers. Together with [AutoPilot Platform](../Autopilot-Platform/README_en.md), it supports the full delivery path—from case design and local validation to remote batch execution and report archival.
+AutoPilot is a professional desktop IDE for test engineering teams. It unifies keyword-driven automation across web, mobile, API, data, and middleware layers. Together with [AutoPilot Platform](https://github.com/zhoujun94511/Autopilot-Platform), it supports the full delivery path—from case design and local validation to remote batch execution and report archival. That repository is the server and web workspace: design review, remote batch scheduling, lab device governance, and report archival.
 
 ![IDE main window](docs/pic/ide-main-CN.png)
 
@@ -119,7 +119,7 @@ Full dependency matrix: [setup overview](docs/SETUP.md).
 
 ## Works with Platform
 
-AutoPilot IDE focuses on authoring and local validation. [AutoPilot Platform](../Autopilot-Platform/README_en.md) provides design review, remote scheduling, device-pool governance, and report archival. Together they form a closed loop from review and binding through artifact publishing, remote execution, and result delivery.
+AutoPilot IDE focuses on authoring and local validation. [AutoPilot Platform](https://github.com/zhoujun94511/Autopilot-Platform) is the companion server and web workspace repository. It provides design review, remote scheduling, device-pool governance, and report archival. Together they form a closed loop from review and binding through artifact publishing, remote execution, and result delivery.
 
 Start Platform first, then sign in from IDE connection settings. To register local devices in the shared pool:
 
@@ -136,7 +136,9 @@ Integration checklist: [IDE integration](../Autopilot-Platform/docs/architecture
 
 **Visual authoring** — Project tree, step editor, keyword library, and execution console in one workspace, with light and dark themes for day-to-day authoring and batch runs.
 
-**Inspector and mirroring** — Control-tree capture and locator maintenance for Android, iOS, and web; low-latency Android mirroring and high-frame-rate capture on macOS. See the [inspector guide](docs/inspector.md).
+**Inspector and mirroring** — Control-tree capture and locator maintenance for Android, iOS, and web. Android mirroring uses scrcpy (H.264). iOS mirroring on macOS uses AVFoundation (H.264). See the [inspector guide](docs/inspector.md).
+
+**iOS HEVC mirroring (Windows / Linux)** — When inspecting an iOS 27+ device locally, the IDE receives the HEVC stream the device publishes over CoreDevice. The host does not transcode. iOS below 27 (device code 9021), a failed open, or `IOS_HEVC=0` falls back to WDA MJPEG. Requires `pymobiledevice3>=11.17.0`. macOS does not use this path. Android mirroring stays on scrcpy H.264.
 
 ![Inspector](docs/pic/ide-inspector-CN.png)
 

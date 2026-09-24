@@ -17,7 +17,7 @@
 
 </div>
 
-AutoPilot 是面向测试工程团队的专业桌面 IDE，以关键字驱动方式统一编排 Web、移动端、接口、数据与中间件自动化。与 [AutoPilot Platform](../Autopilot-Platform/README.md) 协同，覆盖从用例设计、本机验证到远程批跑与报告归档的完整测试交付链路。
+AutoPilot 是面向测试工程团队的专业桌面 IDE，以关键字驱动方式统一编排 Web、移动端、接口、数据与中间件自动化。与 [AutoPilot Platform](https://github.com/zhoujun94511/Autopilot-Platform) 协同。该仓库是服务端与 Web 工作台：负责测试设计评审、远程批跑调度、实验室设备治理与报告归档，和本 IDE 一起覆盖从用例设计、本机验证到远程批跑的完整测试交付链路。
 
 ![IDE 主界面](docs/pic/ide-main-CN.png)
 
@@ -119,7 +119,7 @@ python tools/run_suite.py --project <工程目录> --parallel --platform android
 
 ## 与 Platform 配合
 
-AutoPilot IDE 专注用例编排与本机验证；[AutoPilot Platform](../Autopilot-Platform/README.md) 提供测试设计评审、远程调度、设备池治理与报告归档。两者协同，形成从设计评审、Binding 绑定、制品发布到远程批跑与结果回传的完整闭环。
+AutoPilot IDE 专注用例编排与本机验证；[AutoPilot Platform](https://github.com/zhoujun94511/Autopilot-Platform) 是配套的服务端与 Web 工作台仓库，提供测试设计评审、远程调度、设备池治理与报告归档。两者协同，形成从设计评审、Binding 绑定、制品发布到远程批跑与结果回传的完整闭环。
 
 先启动 Platform，在 IDE 连接设置中登录对应实例。若需将本机设备纳入统一设备池：
 
@@ -136,7 +136,9 @@ python -m autopilot.runner --server http://127.0.0.1:8000 --token-env MC_RUNNER_
 
 **可视化编排** — 工程树、步骤编辑器、关键字库与执行控制台一体化呈现，支持浅色/暗色主题，满足日常编排与批量执行需求。
 
-**控件检视与本机镜像** — 覆盖 Android、iOS、Web 控件树采集与定位符维护；Android 采用 scrcpy 低延迟镜像，iOS 在 macOS 环境支持高帧率采集。详见 [检视器说明](docs/inspector.md)。
+**控件检视与本机镜像** — 覆盖 Android、iOS、Web 控件树采集与定位符维护；Android 采用 scrcpy（H.264）低延迟镜像，macOS 上的 iOS 镜像走 AVFoundation（H.264）。详见 [检视器说明](docs/inspector.md)。
+
+**iOS HEVC 镜像（Windows / Linux）** — 本机检视 iOS 27 及以上设备时，通过 CoreDevice 接收设备直接推出的 HEVC 画面，主机不转码。低于 iOS 27（设备返回 9021）、开流失败，或设置 `IOS_HEVC=0` 时，自动回到 WDA MJPEG。需要 `pymobiledevice3>=11.17.0`。macOS 不走这条路径。Android 远控与镜像仍是 scrcpy H.264。
 
 ![控件检视器](docs/pic/ide-inspector-CN.png)
 

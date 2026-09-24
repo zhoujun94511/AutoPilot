@@ -24,7 +24,7 @@ dependencies = [
     "numpy>=1.26",
     "cryptography>=42.0",
     # iOS 安装/卸载/在装检测（keywords.mobile.session 顶层 import；失败回退 go-ios）
-    "pymobiledevice3>=4.0",
+    "pymobiledevice3>=11.17.0",
     # iOS 工具链进程识别（mobile.ios_bootstrap 懒 import；缺失时优雅降级）
     "psutil>=5.9",
     # 用例 YAML 序列化（model.serializer 顶层 import）

@@ -33,8 +33,14 @@ def test_zip_project_dir_keeps_needed_skips_redundant(tmp_path):
     (root / "logs").mkdir()
     (root / "logs" / "run.txt").write_text("x\n", encoding="utf-8")
     (root / "huge.png").write_bytes(b"x" * (26 * 1024 * 1024))
+    (root / "legacy.tc").write_text("<case/>", encoding="utf-8")
+    (root / "lib.map").write_text("<map/>", encoding="utf-8")
+    (root / "kw.ks").write_text("<ks/>", encoding="utf-8")
+    (root / "rows.xlsx").write_bytes(b"PK\x03\x04")
+    (root / "old.xls").write_bytes(b"xls")
 
-    data = zip_project_dir(str(root))
+    skipped: list[str] = []
+    data = zip_project_dir(str(root), skipped=skipped)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         names = [n.replace("\\", "/") for n in zf.namelist()]
 
@@ -43,6 +49,12 @@ def test_zip_project_dir_keeps_needed_skips_redundant(tmp_path):
         assert any(n.endswith("DataConfig.properties") for n in names)
         assert any(n.endswith("images/btn.png") for n in names)
         assert any(n.endswith("data.csv") for n in names)
+        assert any(n.endswith("legacy.tc") for n in names)
+        assert any(n.endswith("lib.map") for n in names)
+        assert any(n.endswith("kw.ks") for n in names)
+        assert any(n.endswith("rows.xlsx") for n in names)
+        assert not any(n.endswith(".xls") and not n.endswith(".xlsx") for n in names)
+        assert skipped == ["huge.png"]
 
         joined = "\n".join(names)
         assert ".git/" not in joined

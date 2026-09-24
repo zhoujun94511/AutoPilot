@@ -38,9 +38,20 @@ def _pretty_stream_tag(src_name: str) -> str:
         return "AVFoundation 高帧" + ("（截图兜底）" if "fallback" in src_name else "")
     if src_name.startswith("mjpeg"):
         return "MJPEG 9100" + ("（截图兜底）" if "fallback" in src_name else "")
+    if src_name.startswith("hevc"):
+        return "iOS HEVC" + ("（截图兜底）" if "fallback" in src_name else "")
     if src_name == "polling" or src_name == "polling-fallback":
         return "截图轮询"
     return src_name
+
+
+def _defer_ios_control(platform: str, opts: dict, control) -> bool:
+    """高帧画面先开、控制留空：首帧后再建 WDA。AVFoundation 与 CoreDevice HEVC 都走这条。"""
+    return (
+        control is None
+        and (platform or "").lower() == "ios"
+        and bool(opts.get("avf_capture") or opts.get("hevc_udid"))
+    )
 
 # 系统键/面板按钮注册表：能力键 → (qtawesome 图标, 提示, 传给 control.key 的名)
 _BUTTONS = [
@@ -347,7 +358,7 @@ class MirrorPanel(QWidget):
             new_src.mode_changed.connect(self._on_stream_mode)
         new_src.start()
         self._stream_tag = _pretty_stream_tag(describe_source(platform, opts))
-        if opts.get("avf_capture"):
+        if _defer_ios_control(platform, opts, control):
             self._got_real_frame = False
             self._first_frame_emitted = False
             self._wait_first_frame = True
@@ -417,8 +428,7 @@ class MirrorPanel(QWidget):
         src_name = describe_source(self._platform, opts)
         self._control = control
         self._stream_tag = _pretty_stream_tag(src_name)
-        _avf = bool(opts.get("avf_capture"))
-        if control is None and self._platform == "ios" and _avf:
+        if _defer_ios_control(self._platform, opts, control):
             self._wait_first_frame = True
             self._first_frame_emitted = False
             self._got_real_frame = False
@@ -435,7 +445,10 @@ class MirrorPanel(QWidget):
                 f"实时操作中（{self._stream_tag}·仅观看）"
                 + ("｜等待画面首帧…" if self._wait_first_frame else "——未取到控制通道"))
         if self._wait_first_frame:
-            self.view.set_hint("等待 iPhone 画面\n正在启用系统采集（CoreMediaIO）…")
+            if opts.get("hevc_udid"):
+                self.view.set_hint("等待 iPhone 画面\n首帧到达后启动 WDA 控制…")
+            else:
+                self.view.set_hint("等待 iPhone 画面\n正在启用系统采集（CoreMediaIO）…")
         else:
             # 清掉上轮 stop() / 枢纽「先停再开」残留的「已停止」占位
             self.view.set_hint(None)

@@ -256,10 +256,12 @@ class MgmtDeliveryMixin(_Base):
                     project_id=pid,
                     required_runtime_version=runtime_pin,
                 )
+                skipped: list[str] = []
                 data = zip_project_dir(
                     proj,
                     project_id=pid,
                     required_runtime_version=runtime_pin,
+                    skipped=skipped,
                 )
                 self._mgmt_ensure_project_space(client, pid, name=basename)
                 art = client.upload_artifact(
@@ -277,6 +279,7 @@ class MgmtDeliveryMixin(_Base):
                     readiness = local_man.get("intent_readiness")
                     if isinstance(readiness, dict):
                         art["_intent_readiness"] = readiness
+                    art["_pack_skipped"] = list(skipped)
                 return art
             finally:
                 client.close()
@@ -315,6 +318,15 @@ class MgmtDeliveryMixin(_Base):
                     bits.extend(str(x) for x in warns[:3])
                 if bits:
                     extra = "\n\n" + "\n".join(bits)
+            from autopilot.mgmt.pack import skipped_large_file_warnings
+
+            pack_warns = skipped_large_file_warnings(
+                list(art.get("_pack_skipped") or []) if isinstance(art, dict) else []
+            )
+            for line in pack_warns:
+                self.console.log(f"⚠ {line}", "管理台")
+            if pack_warns:
+                extra += "\n\n" + "\n".join(pack_warns)
             QMessageBox.information(
                 self,
                 "上传工程",
@@ -593,10 +605,12 @@ class MgmtDeliveryMixin(_Base):
                         subdir="imported_logical",
                     )
                     logical_case_ids = collect_logical_case_ids(approved)
+                    skipped: list[str] = []
                     data = zip_project_dir(
                         proj,
                         project_id=pid,
                         required_runtime_version=runtime_pin,
+                        skipped=skipped,
                     )
                     self._mgmt_ensure_project_space(client, pid, name=vals["name"])
                     art = client.upload_artifact(
@@ -629,6 +643,7 @@ class MgmtDeliveryMixin(_Base):
                         "artifact_id": artifact_id,
                         "case_count": len(logical_case_ids),
                         "draft_count": len(paths),
+                        "pack_skipped": list(skipped),
                     }
                 finally:
                     client.close()
@@ -641,11 +656,14 @@ class MgmtDeliveryMixin(_Base):
                 )
                 if callable(refresh):
                     refresh()
+                from autopilot.mgmt.pack import skipped_large_file_warnings
+
                 warns = [
                     str(w).strip()
                     for w in (job.get("warnings") or [])
                     if str(w).strip()
                 ]
+                warns.extend(skipped_large_file_warnings(list(result.get("pack_skipped") or [])))
                 self.console.log(
                     f"已通过 enqueue-job 入队 {result.get('case_count', 0)} 条 "
                     f"APPROVED 用例：job={job.get('id', '')}",
@@ -730,11 +748,13 @@ class MgmtDeliveryMixin(_Base):
                 try:
                     runtime_pin = required_runtime_version(client)
                     artifact_id = str(settings.get("mc_last_artifact_id", "") or "")
+                    skipped: list[str] = []
                     if vals["reupload"] or not artifact_id:
                         data = zip_project_dir(
                             proj,
                             project_id=vals["project_id"] or pid,
                             required_runtime_version=runtime_pin,
+                            skipped=skipped,
                         )
                         self._mgmt_ensure_project_space(
                             client, vals["project_id"], name=vals["name"]
@@ -788,7 +808,12 @@ class MgmtDeliveryMixin(_Base):
                     if vals.get("entry_paths"):
                         body["entry_paths"] = list(vals["entry_paths"])
                     job = client.create_job(body)
-                    return {"job": job, "artifact_id": artifact_id, "vals": vals}
+                    return {
+                        "job": job,
+                        "artifact_id": artifact_id,
+                        "vals": vals,
+                        "pack_skipped": list(skipped),
+                    }
                 finally:
                     client.close()
 
@@ -806,11 +831,14 @@ class MgmtDeliveryMixin(_Base):
                 self.console.log(
                     f"已提交远程任务 {jid}（artifact={artifact_id}{app_note}）", "管理台"
                 )
+                from autopilot.mgmt.pack import skipped_large_file_warnings
+
                 warns = [
                     str(w).strip()
                     for w in (job.get("warnings") or [])
                     if str(w).strip()
                 ]
+                warns.extend(skipped_large_file_warnings(list(result.get("pack_skipped") or [])))
                 for w in warns:
                     self.console.log(f"⚠ {w}", "管理台")
                 extra = ("\n\n" + "\n".join(warns[:5])) if warns else ""

@@ -4,6 +4,7 @@
 不 import Platform 服务端鉴权实现。
 
 模块名默认 ``autopilot.runner``，可用环境变量 ``MC_RUNNER_MODULE`` 覆盖。
+分发给用户的 IDE 只带本模块，不查找、不加载 Autopilot-Platform。
 """
 
 from __future__ import annotations

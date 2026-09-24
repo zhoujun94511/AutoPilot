@@ -133,6 +133,7 @@ class DeviceMirrorMixin(_Base):
             cancel.set()
         self._mirror_control_pending = False
         self._mirror_avf_active = False
+        self._mirror_hevc_active = False
         self._mirror_avf_retries = 0
         set_capture_active(False)
         # driver/WDA 收尾放到后台，避免停止镜像时 GUI 卡数秒
@@ -170,6 +171,7 @@ class DeviceMirrorMixin(_Base):
         log = get_logger("镜像")
         log.warning("高帧采集失败，切换 WDA MJPEG：%s", (reason or "")[:120])
         self._mirror_avf_active = False
+        self._mirror_hevc_active = False
         set_capture_active(False)
         self._mirror_control_pending = True
         # noinspection PyProtectedMember
@@ -194,6 +196,13 @@ class DeviceMirrorMixin(_Base):
         if not self.mirror.active():
             return False
         log = get_logger("镜像")
+        if getattr(self, "_mirror_hevc_active", False):
+            from ...mobile.ios_mirror import allows_mjpeg_fallback
+            if allows_mjpeg_fallback():
+                self._mirror_hevc_active = False
+                return self._handoff_to_mjpeg(reason)
+            log.error("HEVC 采集失败（严格模式，不回退）：%s", (reason or "")[:160])
+            return False
         if getattr(self, "_mirror_avf_active", False):
             from ...mobile.ios_mirror import build_avf_opts, allows_mjpeg_fallback
             retries = getattr(self, "_mirror_avf_retries", 0) + 1
@@ -429,7 +438,10 @@ class DeviceMirrorMixin(_Base):
                 self._mirror_resuming = True
                 self.mirror.btn_live.setChecked(True)
                 return
-            _highfps_active = getattr(self, "_mirror_avf_active", False)
+            _highfps_active = (
+                getattr(self, "_mirror_avf_active", False)
+                or getattr(self, "_mirror_hevc_active", False)
+            )
             if fallback_mjpeg or not _highfps_active:
                 self._activate_mjpeg_mirror()
                 return
@@ -460,7 +472,7 @@ class DeviceMirrorMixin(_Base):
         """为实时交互镜像提供 (platform, opts, control_sink)。
 
         Android：scrcpy 帧 + scrcpy 控制（control 留空，由 MirrorPanel 取）。
-        iOS：画面与控制正交——Mac auto 优先 AVF H.264；Win/Linux auto 走 MJPEG 9100；
+        iOS：画面与控制正交——Mac auto 优先 AVF H.264；Win/Linux 且 iOS 27+ 走 HEVC，否则 MJPEG；
         控制按 backend 选 AppiumControlSink（Mac Appium）或 WdaControlSink（WDA-direct）。
 
         设备选择由 MirrorPanel.before_start → _prepare_mirror_start 完成，此处不再弹选。
@@ -472,10 +484,18 @@ class DeviceMirrorMixin(_Base):
         if not self._guard_mobile_session_target("镜像"):
             return None
         # iOS 镜像：Mac 优先 AVFoundation 高帧（与 WDA 控制共存）；否则先有 WDA 会话
-        from ...mobile.ios_mirror import can_try_avf_mirror  # 延迟：仅 iOS 镜像源选择
-        _mirror_mode = settings.ios_mirror_source()
-        _try_avf = plat == "iOS" and can_try_avf_mirror(_mirror_mode, host=host_os())
-        if plat == "iOS" and not self._ios_session_alive() and not _try_avf:
+        from ...mobile.ios_mirror import can_try_avf_mirror, can_try_hevc_mirror
+        _intent = settings.ios_mirror_intent()
+        _try_avf = plat == "iOS" and can_try_avf_mirror(_intent, host=host_os())
+        _try_hevc = False
+        if plat == "iOS" and not _try_avf:
+            from ...mobile.ios_bootstrap import device_ios_version
+            _try_hevc = can_try_hevc_mirror(
+                _intent,
+                host=host_os(),
+                ios_version=device_ios_version(self._inspect_udid),
+            )
+        if plat == "iOS" and not self._ios_session_alive() and not _try_avf and not _try_hevc:
             self._ensure_ios_session_async()
             return None
         self._mirror_udid = self._inspect_udid   # 记住镜像的具体设备，供拔出检测
@@ -513,8 +533,17 @@ class DeviceMirrorMixin(_Base):
             opts["grab"] = grab
 
         _host = host_os()
-        _resolved = resolve_mirror_source(_mirror_mode, host=_host)
+        _resolved = resolve_mirror_source(_intent, host=_host)
         _use_mjpeg_video = _resolved == MIRROR_MJPEG
+
+        if _try_hevc:
+            self._mirror_hevc_active = True
+            self._mirror_avf_active = False
+            opts["hevc_udid"] = self._inspect_udid
+            opts["hevc_max_width"] = 1080
+            get_logger("镜像").info("镜像走 iOS 27 CoreDevice HEVC")
+            return "ios", opts, None
+        self._mirror_hevc_active = False
 
         if _use_mjpeg_video:
             from ...mobile.ios_mirror_bootstrap import build_mjpeg_opts
@@ -526,7 +555,10 @@ class DeviceMirrorMixin(_Base):
                 if mjpeg_alive(mjpeg_port):
                     opts["mjpeg_url"] = f"http://127.0.0.1:{mjpeg_port}"
             if opts.get("mjpeg_url"):
-                get_logger("镜像").info("MJPEG 9100 就绪（显式 mjpeg 模式）")
+                if _intent == MIRROR_MJPEG:
+                    get_logger("镜像").info("MJPEG 9100 就绪（显式 mjpeg 模式）")
+                else:
+                    get_logger("镜像").info("MJPEG 9100 就绪")
             elif not opts.get("grab"):
                 self.console.log("iOS MJPEG 未就绪，请先建立 WDA 会话", "镜像", "WARNING")
                 return None

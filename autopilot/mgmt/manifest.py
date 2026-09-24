@@ -16,7 +16,7 @@ from .pack import _INCLUDE_SUFFIXES, _MAX_FILE_BYTES, _SKIP_DIR_NAMES, _SKIP_SUF
 
 def _is_included_file(filename: str) -> bool:
     lower = filename.lower()
-    if lower.startswith(".") or lower in ("thumbs.db", "desktop.ini"):
+    if lower.startswith(".") or lower in ("thumbs.db", "desktop.ini", "manifest.json"):
         return False
     if any(lower.endswith(s) for s in _SKIP_SUFFIXES):
         return False

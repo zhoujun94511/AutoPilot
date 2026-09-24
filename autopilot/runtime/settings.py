@@ -337,20 +337,24 @@ def set_device_gone_grace_s(seconds: float) -> None:
     )
 
 
-def ios_mirror_source() -> str:
-    """iOS 实时镜像画面源：auto（默认，Mac 走 AVFoundation 高帧）| mjpeg（显式 9100）。
+def ios_mirror_intent() -> str:
+    """配置里的 auto 或显式 mjpeg。Windows 上的 auto 保持 auto，供 HEVC 判断。"""
+    from ..mobile.ios_mirror import mirror_source_intent
 
-    环境变量 IOS_MIRROR_SOURCE 优先于设置项。Win/Linux 的 auto 等价 mjpeg。
+    value = str(load().get("ios_mirror_source", "auto") or "auto").strip().lower()
+    return mirror_source_intent(value)
+
+
+def ios_mirror_source() -> str:
+    """按当前主机解析后的画面源。Mac 的 auto 仍是 auto；Win/Linux 的 auto 解析为 mjpeg。
+
+    环境变量 IOS_MIRROR_SOURCE 优先于设置项。iOS 27 HEVC 不读这个结果，读 ios_mirror_intent。
     Mac 上高帧采集失败默认回退 MJPEG；调试时设 ``IOS_MIRROR_STRICT=1`` 关闭回退。
     """
-    from ..mobile.ios_mirror import mirror_source_from_env, normalize_mirror_source, resolve_mirror_source
+    from ..mobile.ios_mirror import resolve_mirror_source
     from ..keywords.mobile.platform import host_os
 
-    env_mode = mirror_source_from_env()
-    if env_mode:
-        return resolve_mirror_source(env_mode, host=host_os())
-    value = str(load().get("ios_mirror_source", "auto") or "auto").strip().lower()
-    return resolve_mirror_source(normalize_mirror_source(value), host=host_os())
+    return resolve_mirror_source(ios_mirror_intent(), host=host_os())
 
 
 def set_ios_mirror_source(mode: str) -> None:

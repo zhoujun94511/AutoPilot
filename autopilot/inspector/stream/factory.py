@@ -16,7 +16,14 @@ from .base import ScreenSource
 
 
 def _ios_source(opts: dict, grab) -> Optional[ScreenSource]:
-    """iOS 画面：AVFoundation 原生（Mac 高帧）→ MJPEG → 轮询。"""
+    """iOS 画面：Mac AVFoundation，或 Win/Linux 的 iOS 27 HEVC，再 MJPEG / 轮询。"""
+    if opts.get("hevc_udid"):
+        from .hevc_source import HevcScreenSource
+        return HevcScreenSource(
+            str(opts.get("hevc_udid") or ""),
+            max_width=int(opts.get("hevc_max_width") or 1080),
+            fallback_grab=grab,
+        )
     if opts.get("avf_capture"):
         from .avf_source import AvfScreenSource
         helper = opts.get("avf_helper") or ""
@@ -75,6 +82,8 @@ def describe_source(platform: str, opts: dict) -> str:
         if ScrcpyScreenSource.available():
             return "scrcpy"
     if plat.startswith("ios"):
+        if opts.get("hevc_udid"):
+            return "hevc" + ("+polling-fallback" if opts.get("grab") else "")
         if opts.get("avf_capture") and opts.get("avf_helper"):
             return "avf" + ("+polling-fallback" if opts.get("grab") else "")
         if opts.get("mjpeg_url"):

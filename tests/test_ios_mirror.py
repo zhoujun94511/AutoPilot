@@ -25,6 +25,31 @@ def test_auto_resolves_by_platform() -> bool:
     return win and mac
 
 
+def test_windows_auto_keeps_hevc_intent() -> bool:
+    """Win/Linux 的 auto 解析后仍是 mjpeg，但 HEVC 判断必须看到原来的 auto。"""
+    from unittest.mock import patch
+
+    old_source = os.environ.pop("IOS_MIRROR_SOURCE", None)
+    try:
+        intent_auto = im.mirror_source_intent("auto") == im.MIRROR_AUTO
+        resolved = im.resolve_mirror_source("auto", host="windows") == im.MIRROR_MJPEG
+        explicit = im.can_try_hevc_mirror("mjpeg", "windows", "27.0") is False
+        with patch("autopilot.mobile.ios_hevc.hevc_api_available", return_value=True), patch(
+            "autopilot.mobile.ios_hevc.hevc_enabled_by_env", return_value=True
+        ):
+            allowed = im.can_try_hevc_mirror("auto", "windows", "27.0") is True
+        os.environ["IOS_MIRROR_SOURCE"] = "mjpeg"
+        env_blocks = im.can_try_hevc_mirror("auto", "windows", "27.0") is False
+        ok = intent_auto and resolved and explicit and allowed and env_blocks
+    finally:
+        if old_source is None:
+            os.environ.pop("IOS_MIRROR_SOURCE", None)
+        else:
+            os.environ["IOS_MIRROR_SOURCE"] = old_source
+    print("Windows auto 仍可走 HEVC:", "✅" if ok else "❌")
+    return ok
+
+
 def test_strict_fallback_gate() -> bool:
     old = os.environ.pop("IOS_MIRROR_STRICT", None)
     try:
@@ -58,42 +83,57 @@ def test_avf_mac_only_boundary() -> bool:
     return ok
 
 
+class _SavedEnv:
+    """临时写入环境变量，离开 with 时按进入前的值恢复。"""
+
+    def __init__(self, updates: dict[str, str]) -> None:
+        self._updates = updates
+        self._previous: dict[str, str | None] = {}
+
+    def __enter__(self) -> "_SavedEnv":
+        self._previous = {key: os.environ.get(key) for key in self._updates}
+        os.environ.update(self._updates)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        for key, previous in self._previous.items():
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
+
+
 def test_build_avf_opts_includes_udid_and_env() -> bool:
     """build_avf_opts 与 _mirror_session / 断流重启共用，须含 UDID 与编码参数。"""
     from unittest.mock import patch
 
-    env_keys = ("IOS_MIRROR_MAX_WIDTH", "IOS_MIRROR_BITRATE", "IOS_MIRROR_FPS")
-    saved_env = {k: os.environ.pop(k, None) for k in env_keys}
-    try:
-        os.environ["IOS_MIRROR_MAX_WIDTH"] = "720"
-        os.environ["IOS_MIRROR_BITRATE"] = "8000000"
-        os.environ["IOS_MIRROR_FPS"] = "30"
-        with patch("autopilot.mobile.ios_mirror.avf_helper_path", return_value="/tmp/ios-avf-capture"):
-            opts = im.build_avf_opts("UDID-ABC", grab=lambda: b"")
-        grab_fn = opts.get("grab")
-        ok = bool(
-            opts.get("avf_capture") is True
-            and opts.get("avf_helper") == "/tmp/ios-avf-capture"
-            and opts.get("avf_unique_id") == "UDID-ABC"
-            and opts.get("avf_max_width") == 720
-            and opts.get("avf_bitrate") == 8_000_000
-            and opts.get("avf_fps") == 30
-            and grab_fn is not None
-        )
-        print("build_avf_opts:", "✅" if ok else "❌")
-        return ok
-    finally:
-        for key, val in saved_env.items():
-            if val is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = val
+    with _SavedEnv(
+        {
+            "IOS_MIRROR_MAX_WIDTH": "720",
+            "IOS_MIRROR_BITRATE": "8000000",
+            "IOS_MIRROR_FPS": "30",
+        }
+    ), patch("autopilot.mobile.ios_mirror.avf_helper_path", return_value="/tmp/ios-avf-capture"):
+        opts = im.build_avf_opts("UDID-ABC", grab=lambda: b"")
+    grab_fn = opts.get("grab")
+    ok = (
+        opts.get("avf_capture") is True
+        and opts.get("avf_helper") == "/tmp/ios-avf-capture"
+        and opts.get("avf_unique_id") == "UDID-ABC"
+        and opts.get("avf_max_width") == 720
+        and opts.get("avf_bitrate") == 8_000_000
+        and opts.get("avf_fps") == 30
+        and grab_fn is not None
+    )
+    print("build_avf_opts:", "✅" if ok else "❌")
+    return ok is True
 
 
 def main() -> int:
     ok = all([
         test_mirror_source_normalize(),
         test_auto_resolves_by_platform(),
+        test_windows_auto_keeps_hevc_intent(),
         test_strict_fallback_gate(),
         test_avf_mac_only_boundary(),
         test_build_avf_opts_includes_udid_and_env(),
