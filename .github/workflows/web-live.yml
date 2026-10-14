@@ -2,9 +2,6 @@ name: web-live
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每日 UTC 18:00 ≈ 北京时间次日 02:00
-    - cron: "0 18 * * *"
 
 jobs:
   web-live:
