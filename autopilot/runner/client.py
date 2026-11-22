@@ -81,6 +81,13 @@ class PlatformClient:
     def _url(path: str) -> str:
         return f"{API_V1_PREFIX}{path}"
 
+    @staticmethod
+    def _claim_params(runner_id: str, claimed_at: str) -> dict[str, str]:
+        params = {"runner_id": runner_id}
+        if claimed_at:
+            params["claimed_at"] = claimed_at
+        return params
+
     def register(self, body: RunnerRegister) -> dict[str, Any]:
         r = self._client.post(self._url("/runners/register"), json=body.to_dict())
         _raise_for_status(r)
@@ -113,16 +120,16 @@ class PlatformClient:
         _raise_for_status(r)
         return JobOut.from_dict(r.json())
 
-    def mark_running(self, job_id: str, runner_id: str) -> JobOut:
+    def mark_running(self, job_id: str, runner_id: str, *, claimed_at: str = "") -> JobOut:
         r = self._client.post(
             self._url(f"/jobs/{job_id}/running"),
-            params={"runner_id": runner_id},
+            params=self._claim_params(runner_id, claimed_at),
         )
         _raise_for_status(r)
         return JobOut.from_dict(r.json())
 
-    def nack(self, job_id: str, runner_id: str, *, reason: str = "") -> JobOut:
-        params: dict[str, Any] = {"runner_id": runner_id}
+    def nack(self, job_id: str, runner_id: str, *, reason: str = "", claimed_at: str = "") -> JobOut:
+        params = self._claim_params(runner_id, claimed_at)
         note = (reason or "").strip()
         if note:
             params["reason"] = note
@@ -130,44 +137,44 @@ class PlatformClient:
         _raise_for_status(r)
         return JobOut.from_dict(r.json())
 
-    def complete(self, job_id: str, runner_id: str, body: JobResultIn) -> JobOut:
+    def complete(self, job_id: str, runner_id: str, body: JobResultIn, *, claimed_at: str = "") -> JobOut:
         r = self._client.post(
             self._url(f"/jobs/{job_id}/complete"),
-            params={"runner_id": runner_id},
+            params=self._claim_params(runner_id, claimed_at),
             json=body.to_dict(),
         )
         _raise_for_status(r)
         return JobOut.from_dict(r.json())
 
-    def upload_report(self, job_id: str, runner_id: str, html_path: str) -> dict[str, Any]:
+    def upload_report(self, job_id: str, runner_id: str, html_path: str, *, claimed_at: str = "") -> dict[str, Any]:
         p = Path(html_path)
         files = {"file": (p.name or "report.html", p.read_bytes(), "text/html")}
         r = self._client.post(
             self._url(f"/jobs/{job_id}/report"),
-            params={"runner_id": runner_id},
+            params=self._claim_params(runner_id, claimed_at),
             files=files,
         )
         _raise_for_status(r)
         return r.json()
 
-    def upload_result_json(self, job_id: str, runner_id: str, json_path: str) -> dict[str, Any]:
+    def upload_result_json(self, job_id: str, runner_id: str, json_path: str, *, claimed_at: str = "") -> dict[str, Any]:
         p = Path(json_path)
         files = {"file": ("result.json", p.read_bytes(), "application/json")}
         r = self._client.post(
             self._url(f"/jobs/{job_id}/report"),
-            params={"runner_id": runner_id},
+            params=self._claim_params(runner_id, claimed_at),
             files=files,
         )
         _raise_for_status(r)
         return r.json()
 
-    def upload_evidence_zip(self, job_id: str, runner_id: str, zip_path: str) -> dict[str, Any]:
+    def upload_evidence_zip(self, job_id: str, runner_id: str, zip_path: str, *, claimed_at: str = "") -> dict[str, Any]:
         """上传 D3 evidence.zip（内含 reports/evidence/**）。"""
         p = Path(zip_path)
         files = {"file": ("evidence.zip", p.read_bytes(), "application/zip")}
         r = self._client.post(
             self._url(f"/jobs/{job_id}/report"),
-            params={"runner_id": runner_id},
+            params=self._claim_params(runner_id, claimed_at),
             files=files,
         )
         _raise_for_status(r)

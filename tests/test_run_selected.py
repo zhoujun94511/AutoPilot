@@ -48,7 +48,7 @@ def test_fault_toggle() -> bool:
             cont_ok = win._fault_strategy is FaultStrategy.CONTINUE
             win.close()
         ok = stop_ok and cont_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("失败策略切换: ⏭ 跳过(", e, ")")
         return True
     print("失败策略切换:", "✅" if ok else "❌")
@@ -71,7 +71,7 @@ def test_run_selected() -> bool:
             _drain(win)
             ok = ran and win._worker is None and "通过率" in win.statusBar().currentMessage()
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("运行选中步骤: ⏭ 跳过(", e, ")")
         return True

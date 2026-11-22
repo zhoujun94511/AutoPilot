@@ -21,6 +21,16 @@ description: AutoPilot 项目代码自检与通用 lint 修复规范。每完成
 ④ 报告需人工判断的项；⑤ 跑全部测试套（显式列表 + `tests/test_*.py` 自动发现；离屏 PyQt UI 套见 `TEST_SUITE_EXCLUDE` 默认跳过）。
 脚本幂等，可反复运行；退出码非 0 即存在未用导入或测试失败。改完后据清单手工补 noinspection，再复跑。
 
+测试调度按入口区分：有 `if __name__ == "__main__"` 的测试脚本运行其 `main`；
+其余测试模块由 `pytest -p no:xonsh` 执行，避免只导入模块却没有运行断言。
+旧式脚本通过 `run_test_suite.py` 复用 pytest 的静态 Qt 对话框默认值，
+既保留脚本 `main` 的布尔汇总，也允许测试自身的局部 mock 覆盖默认值。
+普通套默认最多运行 180 秒，真实浏览器套 `test_web_live` 为 600 秒，每 15 秒报告仍在运行；超时会结束该套进程及其子进程、
+记为失败并继续下一套。标准输出与错误输出保存在 `logs/autocheck/<本次运行>/`，
+失败时显示最后 12 行。可用 `--test-timeout 900` 统一覆盖所选套的时限。
+可用 `--test-suite test_keyword_editor` 仅跑某套，或重复 `--test-suite` 选择多套；
+静态检查不受此筛选影响。
+
 **日常（Agent/批量 UI 改动）**：先跑静态检查，不拖全量测试进度：
 
 ```

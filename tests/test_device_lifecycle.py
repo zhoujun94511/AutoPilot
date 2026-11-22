@@ -10,6 +10,16 @@ try:
 except Exception:
     pass
 
+_APP = None
+
+
+def _app():
+    global _APP
+    from PyQt6.QtWidgets import QApplication
+    _APP = QApplication.instance() or QApplication([])
+    _APP.setQuitOnLastWindowClosed(False)
+    return _APP
+
 
 def test_appium_server_mgr() -> bool:
     from autopilot.keywords.mobile.appium_server import AppiumServer
@@ -46,8 +56,7 @@ def test_inspect_reset() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication
-        app = QApplication.instance() or QApplication([])
+        app = _app()
         from autopilot.ui.main_window import MainWindow
         with tempfile.TemporaryDirectory() as t:
             w = MainWindow(project_dir=t, config_dir="")
@@ -70,8 +79,7 @@ def test_inspect_cancel_clears_target() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication
-        _ = QApplication.instance() or QApplication([])
+        _app()
         from autopilot.ui.main_window import MainWindow
         from autopilot.keywords.context import ExecutionContext
         with tempfile.TemporaryDirectory() as t:
@@ -118,50 +126,68 @@ def test_mirror_gone_multidevice() -> bool:
 
 def test_inspect_device_unplug() -> bool:
     """检视设备拔出（带去抖）：持续缺席超宽限期才释放会话；瞬时闪断(掉线即恢复)不误拆；
-    别台在/Web 不受影响。宽限期置 0 + processEvents 触发计时回调。"""
+    别台在/Web 不受影响。短宽限期配合事件循环验证真实计时回调。"""
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication
-        app = QApplication.instance() or QApplication([])
+        from unittest.mock import patch
+        from PyQt6.QtCore import QEventLoop, QTimer
+        app = _app()
         from autopilot.ui.main_window import MainWindow
         from autopilot.keywords.context import ExecutionContext
         with tempfile.TemporaryDirectory() as t:
             w = MainWindow(project_dir=t, config_dir="")
-            w._gone_grace_s = 0          # 即时触发（仍要过一次事件循环，验证「确认」语义）
+            w._gone_grace_s = 0.02
             calls = {"reset": 0}
-            w._reset_inspect_session = lambda: calls.__setitem__("reset", calls["reset"] + 1)
 
-            def pump():
+            def pump_until(predicate):
+                loop = QEventLoop()
+                poll = QTimer(loop)
+                poll.timeout.connect(lambda: loop.quit() if predicate() else None)
+                timeout = QTimer(loop)
+                timeout.setSingleShot(True)
+                timeout.timeout.connect(loop.quit)
+                poll.start(5)
+                timeout.start(2000)
+                try:
+                    loop.exec()
+                finally:
+                    poll.stop()
+                    timeout.stop()
+                assert predicate(), "设备去抖回调未在期限内完成"
+
+            try:
+                with patch.object(w, "_reset_inspect_session", side_effect=lambda **_kw:
+                                  calls.__setitem__("reset", calls["reset"] + 1)):
+                    # 1) 瞬时闪断：保留所选目标，恢复后取消计时，不拆会话。
+                    w._inspect_platform, w._inspect_udid, w._inspect_chosen = "iOS", "U1", True
+                    w._inspect_ctx = ExecutionContext()
+                    w._on_devices_changed([], ["U2"])
+                    assert w._inspect_chosen and "inspect" in w._gone_timers, "缺席时未启动去抖"
+                    w._on_devices_changed([], ["U1", "U2"])
+                    assert w._inspect_chosen and calls["reset"] == 0, "瞬时闪断误拆检视会话"
+                    assert "inspect" not in w._gone_timers, "设备恢复后未取消去抖"
+                    # 2) 持续缺席：期限到后恰好释放一次并清选择。
+                    w._on_devices_changed([], ["U2"])
+                    pump_until(lambda: not w._inspect_chosen and calls["reset"] == 1)
+                    assert "inspect" not in w._gone_timers, "确认断开后残留计时器"
+                    # 3) 自己那台仍在线（多台）时不动。
+                    w._inspect_platform, w._inspect_udid, w._inspect_chosen = "Android", "A", True
+                    w._inspect_ctx = ExecutionContext()
+                    w._on_devices_changed(["A", "B"], [])
+                    app.processEvents()
+                    assert w._inspect_chosen and calls["reset"] == 1, "误拆在线设备会话"
+                    # 4) Web 检视不受移动设备插拔影响。
+                    w._inspect_platform, w._inspect_chosen = "Web", True
+                    w._on_devices_changed([], [])
+                    app.processEvents()
+                    assert w._inspect_chosen and calls["reset"] == 1, "移动设备断开影响 Web 会话"
+                ok = True
+            finally:
+                w.close()
+                w.deleteLater()
                 app.processEvents()
-
-            # 1) 瞬时闪断：检视 iOS·U1；U1 消失→随即恢复（计时未到先取消）→ 不拆会话
-            w._inspect_platform, w._inspect_udid, w._inspect_chosen = "iOS", "U1", True
-            w._inspect_ctx = ExecutionContext()
-            w._on_devices_changed([], ["U2"])        # 缺席 → 起计时
-            w._on_devices_changed([], ["U1", "U2"])  # 恢复 → 取消计时
-            pump()
-            flap_ok = (w._inspect_chosen is True and calls["reset"] == 0)
-            # 2) 持续缺席：U1 走了不回 → 宽限期满 → 释放 + 清标记
-            w._on_devices_changed([], ["U2"])
-            pump()
-            gone_ok = (w._inspect_chosen is False and calls["reset"] == 1)
-            # 3) 自己那台一直在（多台）→ 不动
-            w._inspect_platform, w._inspect_udid, w._inspect_chosen = "Android", "A", True
-            w._inspect_ctx = ExecutionContext()
-            w._on_devices_changed(["A", "B"], [])
-            pump()
-            stay_ok = (w._inspect_chosen is True and calls["reset"] == 1)
-            # 4) Web 检视：拔光手机也不影响
-            w._inspect_platform, w._inspect_chosen = "Web", True
-            w._on_devices_changed([], [])
-            pump()
-            web_ok = w._inspect_chosen is True
-            # 断言已在此前完成；离屏(offscreen)QPA 下经上述设备增删序列后再 close()
-            # 会触发 PyQt6 native 崩溃(0xC0000409，headless 渲染后端销毁缺陷，真实 GUI
-            # 不受影响)，故这里不显式关闭，交由解释器退出回收，避免拖垮整套用例。
-        ok = flap_ok and gone_ok and stay_ok and web_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("检视设备拔出: ⏭ 跳过(", e, ")")
@@ -175,8 +201,7 @@ def test_mirror_device_select() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication, QInputDialog
-        _ = QApplication.instance() or QApplication([])
+        _app()
         from autopilot.ui.main_window import MainWindow
         with tempfile.TemporaryDirectory() as t:
             w = MainWindow(project_dir=t, config_dir="")
@@ -217,27 +242,44 @@ def test_ios_mirror_auto_session() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication
-        _ = QApplication.instance() or QApplication([])
+        from unittest.mock import Mock, patch
+        _app()
         from autopilot.ui.main_window import MainWindow
         with tempfile.TemporaryDirectory() as t:
             w = MainWindow(project_dir=t, config_dir="")
             w._inspect_platform, w._inspect_udid = "iOS", "IOSU"
-            # 无会话：_mirror_session 应返回 None 并触发异步建会话（这里 stub 掉异步部分）
-            triggered = {"async": False}
-            w._ensure_ios_session_async = lambda: triggered.__setitem__("async", True)
             w._devices = ([], ["IOSU"])
-            none_ok = w._mirror_session() is None and triggered["async"]
-            # 模拟会话已就绪：_on_ios_session_ready 拿到数据 → 置 resuming + 勾选开始
-            w._ios_session_alive = lambda: True
-            started = {"on": False}
-            w.mirror.btn_live.setChecked = lambda v: started.__setitem__("on", bool(v))
-            w._on_ios_session_ready(("png", "xml", "ios"))
-            resume_ok = started["on"] and w._mirror_resuming is True
-            # resuming 置位后再进 _mirror_session：跳过选择直接放行（不再弹设备框）
-            w.close()
-        ok = none_ok and resume_ok
-    except Exception as e:  # noqa: BLE001
+            worker = Mock()
+            worker.isRunning.return_value = False
+            try:
+                # 仅替换设备探测和线程启动，保留真实异步入口设置用户意图/取消状态。
+                with patch("autopilot.mobile.ios_mirror.can_try_avf_mirror", return_value=False), \
+                     patch("autopilot.mobile.ios_mirror.can_try_hevc_mirror", return_value=False), \
+                     patch("autopilot.mobile.ios_bootstrap.device_ios_version", return_value="17.0"), \
+                     patch("autopilot.ui.main_window.device_mirror.SnapshotWorker", return_value=worker), \
+                     patch.object(w, "_ios_session_alive", return_value=False):
+                    assert w._mirror_session() is None, "无 iOS 会话时应等待异步控制通道"
+                worker.start.assert_called_once()
+                worker.done.connect.assert_called_once_with(w._on_ios_mirror_control_ready)
+                assert w._mirror_want_live and not w._mirror_cancel.is_set(), "异步准备未保留镜像启动意图"
+                assert w._mirror_udid == "IOSU", "异步准备未固定所选设备"
+
+                # 就绪后恢复镜像；用户已终止时，晚到的成功结果必须被丢弃。
+                with patch.object(w, "_ios_session_alive", return_value=True), \
+                     patch.object(w.mirror, "active", return_value=False), \
+                     patch.object(w.mirror.btn_live, "setChecked") as start:
+                    w._on_ios_session_ready(("png", "xml", "ios"))
+                    start.assert_called_once_with(True)
+                    assert w._mirror_resuming, "就绪后未进入镜像恢复状态"
+                    start.reset_mock()
+                    w._mirror_cancel.set()
+                    w._mirror_want_live = False
+                    w._on_ios_session_ready(("png", "xml", "ios"))
+                    start.assert_not_called()
+                ok = True
+            finally:
+                w.close()
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("iOS 镜像自动建会话: ⏭ 跳过(", e, ")")
@@ -251,8 +293,7 @@ def test_mirror_stop_releases_session() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication
-        _ = QApplication.instance() or QApplication([])
+        _app()
         from autopilot.ui.main_window import MainWindow
         from autopilot.keywords.context import ExecutionContext
         from autopilot.keywords.mobile import driver as drv
@@ -308,8 +349,7 @@ def test_panel_placeholders() -> bool:
     """检视器整区主空态 + 镜像视图 set_hint；有快照后切三栏。"""
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-        from PyQt6.QtWidgets import QApplication
-        app = QApplication.instance() or QApplication([])
+        app = _app()
         from autopilot.ui.widgets.inspector_panel import InspectorPanel
         from autopilot.ui.widgets.mirror_panel import MirrorPanel
         ip, mp = InspectorPanel(), MirrorPanel()
@@ -368,8 +408,8 @@ def test_inspect_device_select() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication, QInputDialog
-        _ = QApplication.instance() or QApplication([])
+        from PyQt6.QtWidgets import QInputDialog
+        _app()
         from autopilot.ui.main_window import MainWindow
 
         def pick_plat(plat: str):
@@ -452,8 +492,8 @@ def test_no_mobile_devices() -> bool:
     try:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         import tempfile
-        from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox
-        app = QApplication.instance() or QApplication([])
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        app = _app()
         from autopilot.ui.main_window import MainWindow
         with tempfile.TemporaryDirectory() as t:
             w = MainWindow(project_dir=t, config_dir="")

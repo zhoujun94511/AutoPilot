@@ -127,6 +127,10 @@ def test_ide_exclude_survives_platform_policy_update(tmp_path, monkeypatch):
 
 
 def test_ide_heartbeat_applies_disk_exclude_same_tick(tmp_path, monkeypatch):
+    from autopilot.runner.contract import (
+        JOB_CLAIM_GENERATION_CAPABILITY,
+        JOB_LEASE_HEARTBEAT_CAPABILITY,
+    )
     from autopilot.runner.device_policy import add_exclude_udids
 
     monkeypatch.setenv("MC_RUNNER_STATE_DIR", str(tmp_path))
@@ -151,8 +155,14 @@ def test_ide_heartbeat_applies_disk_exclude_same_tick(tmp_path, monkeypatch):
 
     add_exclude_udids("ide-hb-ex", {"VIS"})
     agent = RunnerAgent("http://platform", runner_id="ide-hb-ex")
+    assert not agent._slots.try_reserve("active-job", ["OTH"])
     hb_stub = _HbClient()
     client = cast(PlatformClient, hb_stub)
     agent._heartbeat_once(client)
     assert [d.udid for d in hb_stub.bodies[0].inventory] == ["VIS", "OTH"]
     assert [d.udid for d in hb_stub.bodies[0].devices] == ["OTH"]
+    assert hb_stub.bodies[0].to_dict()["active_job_ids"] == ["active-job"]
+    assert hb_stub.bodies[0].capabilities == [
+        JOB_CLAIM_GENERATION_CAPABILITY,
+        JOB_LEASE_HEARTBEAT_CAPABILITY,
+    ]

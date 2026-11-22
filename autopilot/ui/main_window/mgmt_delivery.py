@@ -479,7 +479,7 @@ class MgmtDeliveryMixin(_Base):
         if not self._mgmt_require_user_session(purpose="上传应用资源"):
             return
 
-        path, _ = QFileDialog.getOpenFileName(
+        path, _file_filter = QFileDialog.getOpenFileName(
             self,
             "选择 apk / ipa",
             "",

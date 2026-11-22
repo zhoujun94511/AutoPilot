@@ -71,10 +71,14 @@ from __future__ import annotations
 import argparse
 import ast
 import glob
+import math
 import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 from typing import cast
 
 # noinspection PyBroadException
@@ -283,12 +287,15 @@ def report_duplicate_keyword_ids() -> list[str]:
 def _scope_binds(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict:
     """函数体内（不含嵌套函数/lambda）由 for 目标 / 赋值绑定的名字 → 首次行号。"""
     binds: dict = {}
+    enclosing_names: set[str] = set()
 
     def visit(node: ast.AST) -> None:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
                 continue                          # 嵌套作用域单独处理
-            if isinstance(child, ast.For):
+            if isinstance(child, (ast.Nonlocal, ast.Global)):
+                enclosing_names.update(child.names)
+            elif isinstance(child, ast.For):
                 for t in ast.walk(cast(ast.AST, child.target)):
                     if isinstance(t, ast.Name):
                         binds.setdefault(t.id, t.lineno)
@@ -300,7 +307,7 @@ def _scope_binds(fn: ast.FunctionDef | ast.AsyncFunctionDef) -> dict:
             visit(child)
 
     visit(fn)
-    return binds
+    return {name: line for name, line in binds.items() if name not in enclosing_names}
 
 
 def report_shadowing() -> list[str]:
@@ -627,56 +634,133 @@ TEST_SUITES = ["smoke", "test_roundtrip", "test_web", "test_http", "test_datadri
                "test_ios_parity_diff", "test_android_parity"]
 
 
-def run_tests() -> tuple[int, int, int, bool]:
+def _test_command(py: str, path: str) -> list[str]:
+    """脚本型测试走 main；只有 pytest 函数/夹具的模块必须交给 pytest。"""
+    with open(path, encoding="utf-8-sig") as source:
+        tree = ast.parse(source.read(), filename=path)
+    for node in tree.body:
+        if not isinstance(node, ast.If):
+            continue
+        names = {part.id for part in ast.walk(node.test) if isinstance(part, ast.Name)}
+        values = {part.value for part in ast.walk(node.test)
+                  if isinstance(part, ast.Constant) and isinstance(part.value, str)}
+        if "__name__" in names and "__main__" in values:
+            harness = os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_test_suite.py")
+            return [py, "-u", harness, path]
+    return [py, "-u", "-m", "pytest", "-p", "no:xonsh", "-q", path]
+
+
+def _stop_test_process(proc: subprocess.Popen) -> None:
+    """结束本次测试创建的进程组，所有等待均有上限。"""
+    if proc.poll() is not None:
+        return
+    if os.name == "nt":
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=5, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if proc.poll() is None:
+        proc.kill()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _test_log_tail(path: str, max_lines: int = 12) -> list[str]:
+    with open(path, "rb") as log:
+        log.seek(0, os.SEEK_END)
+        log.seek(max(0, log.tell() - 16 * 1024))
+        return log.read().decode("utf-8", "replace").strip().splitlines()[-max_lines:]
+
+
+def run_tests(timeout: float | None = None, heartbeat: float = 15,
+              suite_names: list[str] | None = None) -> tuple[int, int, int, bool]:
     """返回 (通过数, 失败数, 跳过数, 是否被用户中断)。"""
+    limits = (heartbeat,) if timeout is None else (timeout, heartbeat)
+    if not all(math.isfinite(value) and value > 0 for value in limits):
+        raise ValueError("测试超时与进度间隔必须大于 0")
     py = _venv_python(ROOT)
-    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=ROOT)
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=ROOT,
+               QT_QPA_PLATFORM="offscreen", AUTOPILOT_NO_DOTENV="1")
     p = f = skipped = 0
-    suites = discover_test_suites()
+    suites = list(dict.fromkeys(suite_names)) if suite_names is not None else discover_test_suites()
     total = len(suites)
     interrupted = False
-    proc: subprocess.Popen | None = None
+    log_root = os.path.join(ROOT, "logs", "autocheck")
+    os.makedirs(log_root, exist_ok=True)
+    run_dir = tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-"), dir=log_root)
+    timeout_label = "默认单套 180s，真实浏览器套 test_web_live 600s" if timeout is None else f"单套 {timeout:g}s"
+    print(f"[测试] 超时上限：{timeout_label}；运行日志：{run_dir}", flush=True)
     for i, t in enumerate(suites, 1):
         path = os.path.join(ROOT, "tests", t + ".py")
         if not os.path.isfile(path):
             skipped += 1
             continue
         print(f"  [{i}/{total}] {t} ...", flush=True)
+        suite_timeout = timeout if timeout is not None else (600 if t == "test_web_live" else 180)
         rc = -1
-        stdout = b""
-        stderr = b""
+        timed_out = False
+        started = time.monotonic()
+        log_path = os.path.join(run_dir, t + ".log")
+        proc: subprocess.Popen | None = None
         try:
-            proc = subprocess.Popen(
-                [py, path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                cwd=ROOT,
+            command = _test_command(py, path)
+            group_options = (
+                {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+                if os.name == "nt" else {"start_new_session": True}
             )
-            stdout, stderr = proc.communicate()
-            rc = proc.returncode
+            with open(log_path, "wb") as log:
+                suite_env = dict(env, AUTOPILOT_CONFIG_DIR=os.path.join(run_dir, t + ".config"))
+                proc = subprocess.Popen(
+                    command, stdin=subprocess.DEVNULL, stdout=log,
+                    stderr=subprocess.STDOUT, env=suite_env, cwd=ROOT, **group_options,
+                )
+                deadline = started + suite_timeout
+                next_update = started + heartbeat
+                while proc.poll() is None:
+                    now = time.monotonic()
+                    if now >= deadline:
+                        timed_out = True
+                        _stop_test_process(proc)
+                        break
+                    try:
+                        proc.wait(timeout=min(deadline - now, max(0.01, next_update - now)))
+                    except subprocess.TimeoutExpired:
+                        now = time.monotonic()
+                        if now >= next_update and now < deadline:
+                            print(f"    仍在运行：{t}（{now - started:.0f}s；日志 {log_path}）",
+                                  flush=True)
+                            next_update = now + heartbeat
+                rc = proc.returncode
         except KeyboardInterrupt:
             interrupted = True
             print(f"\n[测试] 用户中断（停在 {t}），正在结束子进程…", flush=True)
-            if proc is not None and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
+            if proc is not None:
+                _stop_test_process(proc)
             break
-        if rc == 0:
+        except (OSError, SyntaxError) as exc:
+            print(f"  启动失败：{t}：{exc}", flush=True)
+        elapsed = time.monotonic() - started
+        if rc == 0 and not timed_out:
             p += 1
+            print(f"  PASS: {t}（{elapsed:.1f}s）", flush=True)
         else:
             f += 1
-            print(f"  FAIL: {t}")
-            tail = stdout.decode("utf-8", "replace").strip().splitlines()
-            if tail:
-                print("   ", tail[-3:])
-            err = stderr.decode("utf-8", "replace").strip().splitlines()
-            if err and not tail:
-                print("   ", err[-3:])
+            reason = f"超时 {suite_timeout:g}s，已结束测试进程" if timed_out else f"退出码 {rc}"
+            print(f"  FAIL: {t}（{reason}；{elapsed:.1f}s）日志：{log_path}", flush=True)
+            if os.path.isfile(log_path):
+                for line in _test_log_tail(log_path):
+                    print("    " + line, flush=True)
     return p, f, skipped, interrupted
 
 
@@ -704,7 +788,18 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-test", action="store_true",
                     help="跳过测试套（仅静态检查/自修，适合 UI 批量改动后快速验收）")
+    ap.add_argument("--test-timeout", type=float, default=None,
+                    help="统一覆盖单套超时秒数（默认 180，test_web_live 600；必须大于 0）")
+    ap.add_argument("--test-suite", action="append", dest="test_suites", metavar="NAME",
+                    help="只运行指定测试套（不带 .py，可重复指定）；静态检查仍完整执行")
     args = ap.parse_args()
+    if args.test_timeout is not None and (not math.isfinite(args.test_timeout) or args.test_timeout <= 0):
+        ap.error("--test-timeout 必须大于 0")
+    if args.test_suites:
+        for name in args.test_suites:
+            if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) or not os.path.isfile(
+                    os.path.join(ROOT, "tests", name + ".py")):
+                ap.error(f"测试套不存在或名称无效：{name}")
 
     print("=== AutoPilot 自检/自修 ===")
     xml = fix_xml_empty_tags()
@@ -800,9 +895,10 @@ def main() -> int:
         print("[设备容错审计] 通过")
 
     if not args.no_test:
-        suites = discover_test_suites()
+        suites = (list(dict.fromkeys(args.test_suites))
+                  if args.test_suites else discover_test_suites())
         print(f"[测试] 运行测试套（共 {len(suites)} 个，ROOT={ROOT}）...")
-        p, f, skipped, interrupted = run_tests()
+        p, f, skipped, interrupted = run_tests(timeout=args.test_timeout, suite_names=suites)
         ran = p + f
         if skipped:
             print(f"[测试] 跳过 {skipped} 个（tests/ 下无对应 .py）")

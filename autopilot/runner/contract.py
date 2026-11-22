@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 API_V1_PREFIX = "/api/v1"
 DEFAULT_API_TOKEN = "dev-mc-token"
+JOB_CLAIM_GENERATION_CAPABILITY = "job-claim-generation-v1"
+JOB_LEASE_HEARTBEAT_CAPABILITY = "job-lease-heartbeat-v1"
 
 BACKEND_ANDROID_APPIUM = "android-appium"
 BACKEND_IOS_APPIUM = "ios-appium"
@@ -103,6 +105,7 @@ class HeartbeatIn:
     policy_revision: int = 0
     capabilities: list[str] = field(default_factory=list)
     host_backends: list[str] = field(default_factory=list)
+    active_job_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -112,6 +115,7 @@ class HeartbeatIn:
             "policy_revision": self.policy_revision,
             "capabilities": list(self.capabilities),
             "host_backends": list(self.host_backends),
+            "active_job_ids": list(self.active_job_ids),
         }
 
 
@@ -163,6 +167,15 @@ class JobResultIn:
     def with_error(self, error: str) -> JobResultIn:
         return replace(self, error=error)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> JobResultIn:
+        return cls(
+            status=JobStatus(data["status"]),
+            error=data.get("error"),
+            report=ReportIndex.from_dict(data.get("report")),
+            log=data.get("log"),
+        )
+
 
 @dataclass
 class JobOut:
@@ -187,6 +200,7 @@ class JobOut:
     webhook_url: str = ""
     parent_job_id: Optional[str] = None
     created_by: str = ""
+    claimed_at: str = ""
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> JobOut:
@@ -222,4 +236,5 @@ class JobOut:
             webhook_url=str(data.get("webhook_url") or ""),
             parent_job_id=(str(data["parent_job_id"]) if data.get("parent_job_id") else None),
             created_by=str(data.get("created_by") or ""),
+            claimed_at=str(data.get("claimed_at") or ""),
         )

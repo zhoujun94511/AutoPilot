@@ -6,20 +6,39 @@
   1. 企业部署 ``AUTOPILOT_PLATFORM_URL`` / ``platform.url``（默认锁定）
   2. ``settings.json`` → ``mc_server_url``
   3. ``MC_SERVER`` / ``MC_PLATFORM_URL``
-  4. ``MC_HOST`` + ``MC_PORT`` → ``http://127.0.0.1:8000``
+  4. ``MC_HOST`` + ``MC_PORT``。``0.0.0.0`` 换成本机局域网 IP，没有则 ``127.0.0.1``
 """
 
 from __future__ import annotations
 
 import os
+import socket
 
 from .platform_deploy import allow_user_platform_url_override, deploy_platform_url
 
 
-def _loopback_host(host: str) -> str:
+def local_lan_ip() -> str | None:
+    """本机对外的局域网 IPv4。取不到时返回 None。"""
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+    except OSError:
+        return None
+    finally:
+        if sock is not None:
+            sock.close()
+    if not ip or ip.startswith("127."):
+        return None
+    return ip
+
+
+def _advertise_host(host: str) -> str:
+    """监听地址换成客户端能访问的地址。``0.0.0.0`` 不是合法访问主机。"""
     h = (host or "127.0.0.1").strip() or "127.0.0.1"
-    if h in ("0.0.0.0", "::"):
-        return "127.0.0.1"
+    if h in ("0.0.0.0", "::", "[::]"):
+        return local_lan_ip() or "127.0.0.1"
     return h
 
 
@@ -55,5 +74,44 @@ def platform_base_url(*, include_settings: bool = True) -> str:
         if raw:
             return raw
 
-    host = _loopback_host(os.environ.get("MC_HOST", "127.0.0.1"))
+    host = _advertise_host(os.environ.get("MC_HOST", "127.0.0.1"))
     return f"http://{host}:{platform_port()}"
+
+
+def _production_env() -> bool:
+    return os.environ.get("MC_ENV", "").strip().lower() in ("prod", "production")
+
+
+def align_dev_platform_url() -> str | None:
+    """调试时临时采用当天的局域网地址，只放进本进程环境变量，不写配置文件。
+
+    生产（``MC_ENV=production``）直接跳过，地址用域名。
+    ``AUTOPILOT_PLATFORM_LAN=0`` 关闭。已设置 ``AUTOPILOT_PLATFORM_URL`` /
+    ``MC_SERVER`` / ``MC_PLATFORM_URL`` 时不覆盖。settings.json 里的地址仍优先。
+    """
+    if _production_env():
+        return None
+    if os.environ.get("AUTOPILOT_PLATFORM_LAN", "1").strip().lower() in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        return None
+    if any(
+        (os.environ.get(key) or "").strip()
+        for key in ("AUTOPILOT_PLATFORM_URL", "MC_SERVER", "MC_PLATFORM_URL")
+    ):
+        return None
+    ip = local_lan_ip()
+    if not ip:
+        return None
+    port = platform_port()
+    try:
+        with socket.create_connection((ip, port), timeout=0.35):
+            pass
+    except OSError:
+        return None
+    url = f"http://{ip}:{port}"
+    os.environ["MC_PLATFORM_URL"] = url
+    return url

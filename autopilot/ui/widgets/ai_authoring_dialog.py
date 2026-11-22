@@ -494,13 +494,17 @@ class AiAuthoringDialog(QDialog):
         if not parent or not name:
             return
         path = str(Path(parent) / name)
-        if not Path(path).is_dir():
-            Path(path).mkdir(parents=True, exist_ok=True)
-            cfg = Path(path) / "config"
-            cfg.mkdir(parents=True, exist_ok=True)
-            props = cfg / "DataConfig.properties"
-            if not props.exists():
-                props.write_text("", encoding="utf-8")
+        try:
+            if not Path(path).is_dir():
+                Path(path).mkdir(parents=True, exist_ok=True)
+                cfg = Path(path) / "config"
+                cfg.mkdir(parents=True, exist_ok=True)
+                props = cfg / "DataConfig.properties"
+                if not props.exists():
+                    props.write_text("", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "新建工程失败", str(exc))
+            return
         self._bind_project(path, notify_host=True)
 
     def _bind_project(self, path: str, *, notify_host: bool) -> None:

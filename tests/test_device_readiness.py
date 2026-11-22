@@ -97,10 +97,10 @@ def test_runtime_run_helpers() -> bool:
 def test_ios_install_pick() -> bool:
     from autopilot.ui.main_window.device_readiness import DeviceLists, ios_install_pick_status
 
-    ok1, u1 = ios_install_pick_status(DeviceLists.from_lists([], ["U1"]))
-    ok2, _ = ios_install_pick_status(DeviceLists.from_lists([], ["U1", "U2"]))
-    ok3, _ = ios_install_pick_status(DeviceLists.from_lists([], []))
-    ok = ok1 == ("ok", "U1") and ok2 == ("multi", "") and ok3 == ("manual", "")
+    single = ios_install_pick_status(DeviceLists.from_lists([], ["U1"]))
+    multiple = ios_install_pick_status(DeviceLists.from_lists([], ["U1", "U2"]))
+    manual = ios_install_pick_status(DeviceLists.from_lists([], []))
+    ok = single == ("ok", "U1") and multiple == ("multi", "") and manual == ("manual", "")
     print("iOS 装包选设备:", "✅" if ok else "❌")
     return ok
 

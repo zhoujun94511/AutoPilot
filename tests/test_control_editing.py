@@ -75,7 +75,7 @@ def test_build_condition() -> bool:
             run_ok = "IF" in ctx.logs and "ELSE" not in ctx.logs
             win.close()
         ok = struct_ok and run_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("条件编辑: ⏭ 跳过(", e, ")")
         return True
@@ -105,7 +105,7 @@ def test_build_loop() -> bool:
             run_ok = ctx.logs.count("tick") == 3
             win.close()
         ok = struct_ok and run_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("循环编辑: ⏭ 跳过(", e, ")")
         return True
@@ -140,7 +140,7 @@ def test_stepset_binding_ui() -> bool:
             reject_ok = ed.set_selected_datapool("DATATABLE(x,false)") is False
             win.close()
         ok = insert_ok and picked_ok and set_ok and bound_ok and parse_ok and reject_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("步骤组绑定UI: ⏭ 跳过(", e, ")")
         return True
@@ -181,7 +181,7 @@ def test_experience_items() -> bool:
                         and node.relative_path.replace("\\", "/") == "sub/other.tc.yaml")
             win.close()
         ok = prefix_ok and dis_ok and skip_ok and inner_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("体验项: ⏭ 跳过(", e, ")")
         return True
@@ -220,7 +220,7 @@ def test_column_picker() -> bool:
             insert_ok = probe.text() == "COLUMN(name,)"
             win.close()
         ok = cols_ok and pf_cols and insert_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("COLUMN 列选择器: ⏭ 跳过(", e, ")")
         return True
@@ -262,7 +262,7 @@ def test_identity_edit_ops() -> bool:
         del_ok = (len(tc2.case.steps) == 2 and tc2.case.steps[0] is x0
                   and all(s is not x1 for s in tc2.case.steps))   # 删的是 x1(第2个)，x0 还在
         ok = paste_ok and del_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("身份定位编辑: ⏭ 跳过(", e, ")")
         return True
@@ -302,7 +302,7 @@ def test_multirow_clipboard() -> bool:
         selrows(ed2, 1, 2); ed2.cut_selected()
         cut_ok = names(ed2) == ["A", "D"] and len(ed2._clipboard) == 2
         ok = copy_n and paste_ok and again_ok and cut_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("多行剪贴板: ⏭ 跳过(", e, ")")
         return True
@@ -327,7 +327,7 @@ def test_uninstall_cache_save_visibility() -> bool:
             and _param_row_visible("mobile_app_install_and_open", "keepData", android_ins)
             and not _param_row_visible("mobile_app_install_and_open", "keepData", ios_ins)
         )
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("卸载 cacheSave 可见性: ⏭ 跳过(", e, ")")
         return True
@@ -368,7 +368,7 @@ def test_platform_param_display_text() -> bool:
         strip_hidden_params(ins)
         stripped = not any(p.param_id == "keepData" for p in ins.params)
         ok = ok and stripped
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("参数列平台过滤: ⏭ 跳过(", e, ")")
         return True
@@ -392,7 +392,7 @@ def test_param_visible_case_platform_fallback() -> bool:
             and not param_visible("mobile_app_install_and_open", "keepData", ins, "ios")
             and param_visible("mobile_app_install_and_open", "backendMode", ins, "ios")
         )
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("用例平台回退显隐: ⏭ 跳过(", e, ")")
         return True

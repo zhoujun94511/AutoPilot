@@ -104,9 +104,8 @@ class DeviceMixin(_Base):
                 self._resolve_inspect_udid()
                 ok, msg = self._inspect_device_available()
                 if not ok:
-                    gone = (getattr(self, "_inspect_udid", "") or "").strip()
-                    self._inspect_chosen = False
-                    self._release_runner_exclude_if_unbound(gone)
+                    # 保留目标到宽限期确认，否则下方去抖监视会因未选中而取消，
+                    # 瞬时闪断也会丢失选择、持续断开反而无法释放原会话。
                     self._update_device_status()
                     if hasattr(self, "inspector"):
                         self.inspector.view.set_hint(
@@ -121,12 +120,6 @@ class DeviceMixin(_Base):
             hint = no_device_placeholder()
             self.inspector.view.set_hint(hint)
             self.mirror.view.set_hint(no_device_placeholder(for_mirror=True))
-            plat = (getattr(self, "_inspect_platform", "") or "").strip()
-            if getattr(self, "_inspect_chosen", False) and plat in ("Android", "iOS"):
-                gone = (getattr(self, "_inspect_udid", "") or "").strip()
-                self._inspect_chosen = False
-                self._release_runner_exclude_if_unbound(gone)
-                self._update_device_status()
         self._sync_device_panel_controls()
         # 设备拔出处理（按「具体设备」判定，多台不误停）——但加去抖：设备在 uiautomator2
         # 初始化等场景会瞬时掉线再恢复，若一格没看到就拆会话，会反复打断刚建的 Appium/WDA。

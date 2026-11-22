@@ -6,8 +6,8 @@ IDE「打开管理台」若仍打开 :8000 上的 ``dist``，会和 Vite 两套 
 规则：
 - 显式 ``mc_web_url`` 最高优先
 - ``AUTOPILOT_MC_DEV_WEB=0`` 强制走 API 同源（生产静态页）
-- 本机 API :8000 且 Vite :5173 在听 → 打开 Vite（与浏览器联调同一套）
-- ``AUTOPILOT_MC_DEV_WEB=1`` 本机时直接用 :5173（不探测）
+- API 是 ``http`` 且端口 8000（本机或局域网 IP），Vite :5173 在听 → 打开 Vite
+- ``AUTOPILOT_MC_DEV_WEB=1`` 且 API 在 8000 时直接用 :5173（不探测）
 """
 
 from __future__ import annotations
@@ -54,20 +54,22 @@ def resolve_web_frontend_url(
     host = (parsed.hostname or "127.0.0.1").strip()
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     scheme = parsed.scheme or "http"
-    vite = f"{scheme}://{'127.0.0.1' if host in _LOOPBACK else host}:{DEV_VITE_PORT}"
+    shown = "127.0.0.1" if host in _LOOPBACK or not host else host
+    vite = f"{scheme}://{shown}:{DEV_VITE_PORT}"
 
     environ = env if env is not None else os.environ
     flag = (environ.get("AUTOPILOT_MC_DEV_WEB") or "").strip()
     if _flag_off(flag):
         return url
 
-    loopback_api = host in _LOOPBACK and port == 8000
-    if _flag_on(flag) and host in _LOOPBACK:
+    production = (environ.get("MC_ENV") or "").strip().lower() in ("prod", "production")
+    dev_api = scheme == "http" and port == 8000 and not production
+    if _flag_on(flag) and dev_api:
         return vite
-    if not loopback_api:
+    if not dev_api:
         return url
 
     probe = vite_open or vite_port_open
-    if probe(host):
+    if probe(shown):
         return vite
     return url

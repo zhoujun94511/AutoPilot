@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,27 @@ def test_platform_url_module():
 
     url = platform_base_url(include_settings=False)
     assert url.startswith("http://")
+
+
+def test_align_dev_platform_url_skips_production(monkeypatch):
+    from autopilot.runtime.platform_url import align_dev_platform_url
+
+    monkeypatch.setenv("MC_ENV", "production")
+    monkeypatch.delenv("MC_PLATFORM_URL", raising=False)
+    assert align_dev_platform_url() is None
+    assert "MC_PLATFORM_URL" not in os.environ
+
+
+def test_zero_host_advertises_lan_or_loopback(monkeypatch):
+    from autopilot.runtime.platform_url import platform_base_url
+
+    monkeypatch.setenv("MC_HOST", "0.0.0.0")
+    monkeypatch.delenv("MC_SERVER", raising=False)
+    monkeypatch.delenv("MC_PLATFORM_URL", raising=False)
+    monkeypatch.delenv("AUTOPILOT_PLATFORM_URL", raising=False)
+    url = platform_base_url(include_settings=False)
+    assert url.startswith("http://")
+    assert "0.0.0.0" not in url
 
 
 def test_configuration_doc():

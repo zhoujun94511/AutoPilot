@@ -22,6 +22,13 @@ try:
 except (ImportError, OSError, ValueError, TypeError, RuntimeError):
     pass
 
+try:
+    from autopilot.runtime.platform_url import align_dev_platform_url
+
+    align_dev_platform_url()
+except (ImportError, OSError, ValueError, TypeError, RuntimeError):
+    pass
+
 # noinspection PyPep8
 from autopilot.app import run  # noqa: E402  (须先注入 sys.path)
 

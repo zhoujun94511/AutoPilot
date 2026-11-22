@@ -174,7 +174,7 @@ class MgmtClient:
         return self._check(r) or {}
 
     def me(self) -> dict:
-        r = self._client.get("/api/v1/auth/me")
+        r = self._client.get("/api/v1/auth/me", headers={"X-Org-Id": ""})
         return self._check(r) or {}
 
     def create_ide_handoff(self) -> str:
@@ -205,11 +205,15 @@ class MgmtClient:
             self._check(r)
 
     def list_projects(self) -> list[dict]:
-        r = self._client.get("/api/v1/projects")
+        r = self._client.get("/api/v1/projects", params={"page": 1, "page_size": 200})
         return self._items(self._check(r))
 
     def list_orgs(self) -> list[dict]:
-        r = self._client.get("/api/v1/orgs")
+        r = self._client.get(
+            "/api/v1/orgs",
+            headers={"X-Org-Id": ""},
+            params={"page": 1, "page_size": 200},
+        )
         return self._items(self._check(r))
 
     def upload_artifact(
@@ -337,17 +341,20 @@ class MgmtClient:
         self,
         runner_id: str,
         *,
-        org_id: str = "",
+        org_id: str | None = None,
         project_ids: list[str] | None = None,
     ) -> dict:
+        from urllib.parse import quote
+
         rid = (runner_id or "").strip()
         if not rid:
             raise MgmtClientError("runner_id 不能为空")
-        body = {
-            "org_id": (org_id or "").strip(),
-            "project_ids": list(project_ids or []),
-        }
-        r = self._client.post(f"/api/v1/runners/{rid}/scoped-token", json=body)
+        body: dict[str, Any] = {}
+        if org_id is not None:
+            body["org_id"] = org_id.strip()
+        if project_ids is not None:
+            body["project_ids"] = list(project_ids)
+        r = self._client.post(f"/api/v1/runners/{quote(rid, safe='')}/scoped-token", json=body)
         return self._check(r) or {}
 
     def generate_logical_cases(self, body: dict) -> list[dict]:
@@ -400,12 +407,16 @@ class MgmtClient:
         *,
         name: str = "",
         description: str = "",
+        org_id: str = "",
     ) -> dict:
-        body = {
+        body: dict[str, Any] = {
             "id": project_id,
             "name": name or project_id,
             "description": description or "",
         }
+        oid = (org_id or self._client.headers.get("X-Org-Id", "")).strip()
+        if oid:
+            body["org_id"] = oid
         r = self._client.post("/api/v1/projects", json=body)
         return self._check(r) or {}
 

@@ -106,6 +106,38 @@ def test_settings_file_permissions_hardened(tmp_path, monkeypatch):
         assert mode == 0o600
 
 
+def test_settings_writes_from_concurrent_processes_preserve_all_keys(tmp_path, monkeypatch):
+    import subprocess
+    import sys
+
+    from autopilot.runtime import settings
+
+    monkeypatch.setenv("AUTOPILOT_CONFIG_DIR", str(tmp_path))
+    worker_code = """
+import sys
+import time
+from autopilot.runtime import settings
+
+settings._harden_path_permissions = lambda *args, **kwargs: None
+original_load = settings.load
+
+def slow_load():
+    data = original_load()
+    time.sleep(0.02)
+    return data
+
+settings.load = slow_load
+for n in range(8):
+    assert settings.set_value(f'{sys.argv[1]}-{n}', n)
+"""
+    prefixes = ("first", "second", "third")
+    with subprocess.Popen([sys.executable, "-c", worker_code, prefixes[0]]) as first, \
+            subprocess.Popen([sys.executable, "-c", worker_code, prefixes[1]]) as second, \
+            subprocess.Popen([sys.executable, "-c", worker_code, prefixes[2]]) as third:
+        assert [child.wait(timeout=15) for child in (first, second, third)] == [0, 0, 0]
+    assert settings.load() == {f"{prefix}-{n}": n for prefix in prefixes for n in range(8)}
+
+
 def test_dpapi_roundtrip_on_windows():
     import sys
 
@@ -146,6 +178,18 @@ def test_resolve_web_frontend_url_prefers_live_vite():
             api_url="https://autopilot.example.com", env={}, vite_open=lambda _h: True
         )
         == "https://autopilot.example.com"
+    )
+    assert (
+        resolve_web_frontend_url(
+            api_url="http://172.16.10.22:8000", env={}, vite_open=lambda _h: True
+        )
+        == "http://172.16.10.22:5173"
+    )
+    assert (
+        resolve_web_frontend_url(
+            api_url="http://172.16.10.22:8000", env={}, vite_open=lambda _h: False
+        )
+        == "http://172.16.10.22:8000"
     )
 
 

@@ -5,10 +5,14 @@
 
 from __future__ import annotations
 
+import copy
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import uuid
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QUrl
@@ -41,6 +45,7 @@ from ..platform_labels import (
 from ..widgets.project_tree import display_name
 from ..widgets.search_view import find_in_project, keyword_hint_from_line
 from ...runtime import settings
+from ...runtime.paths import to_native, validate_portable_name
 
 
 # 仅供静态检查解析 self.* —— 运行时 Mixin 实际由 MainWindow 组合，这里"继承"只在类型检查时生效（运行时为 object，无循环依赖）。
@@ -302,12 +307,16 @@ class FilesMixin(_Base):
         """把「已 show_X + setCurrentWidget」的文件登记为标签页并激活；已打开则更新+激活。"""
         idx = self._doc_index(path) if path else -1
         if idx >= 0:
-            self._open_docs[idx].update(editor=editor, model=model, kind=kind, title=title)
+            self._open_docs[idx].update(
+                editor=editor, model=model, kind=kind, title=title, saved_model=copy.deepcopy(model),
+            )
             self._tab_bar.setTabText(idx, title)
             self._select_tab(idx)
             return
-        self._open_docs.append(
-            {"path": path, "kind": kind, "editor": editor, "model": model, "title": title})
+        self._open_docs.append({
+            "path": path, "kind": kind, "editor": editor, "model": model, "title": title,
+            "saved_model": copy.deepcopy(model),
+        })
         self._switching_tab = True
         try:
             i = self._tab_bar.addTab(title)
@@ -334,6 +343,38 @@ class FilesMixin(_Base):
     def _on_tab_close(self, idx: int) -> None:
         if not (0 <= idx < len(self._open_docs)):
             return
+        if self._confirm_close_docs([idx]):
+            self._remove_doc(idx)
+
+    def _confirm_close_docs(self, indexes) -> bool:
+        active = self._tab_bar.currentIndex()
+        save_indexes = []
+        buttons = QMessageBox.StandardButton
+        for idx in indexes:
+            doc = self._open_docs[idx]
+            if doc["path"] and doc["model"] == doc.get("saved_model"):
+                continue
+            choice = QMessageBox.question(
+                self, "未保存的修改", f"保存「{doc['title']}」的修改？",
+                buttons.Save | buttons.Discard | buttons.Cancel, buttons.Save,
+            )
+            if choice not in (buttons.Save, buttons.Discard):
+                return False
+            if choice == buttons.Save:
+                save_indexes.append(idx)
+
+        for idx in save_indexes:
+            self._select_tab(idx)
+            self._show_doc(self._open_docs[idx])
+            save = self.save_current if self._open_docs[idx]["path"] else self.save_as_dialog
+            if not save():
+                return False
+        if save_indexes and 0 <= active < len(self._open_docs):
+            self._select_tab(active)
+            self._show_doc(self._open_docs[active])
+        return True
+
+    def _remove_doc(self, idx: int) -> None:
         self._open_docs.pop(idx)
         self._switching_tab = True
         try:
@@ -353,6 +394,7 @@ class FilesMixin(_Base):
         if not (0 <= idx < len(self._open_docs)):
             return
         doc = self._open_docs[idx]
+        doc["saved_model"] = copy.deepcopy(doc["model"])
         sp = getattr(doc["model"], "source_path", "") or ""
         if sp:
             doc["path"] = sp
@@ -476,7 +518,7 @@ class FilesMixin(_Base):
 
     def reveal_path(self, path: str) -> None:
         """在系统文件管理器中定位指定路径（搜索右键等）。"""
-        if not path or not os.path.exists(path):
+        if not path or not os.path.lexists(path):
             self.console.log("无可定位的路径", "文件", "WARNING")
             return
         # noinspection PyBroadException
@@ -636,8 +678,10 @@ class FilesMixin(_Base):
             self.center.setCurrentWidget(self.welcome)
         self._sync_step_editor_context()
 
-    def close_project(self) -> None:
+    def close_project(self, *, discard_open: bool = False) -> None:
         """关闭当前工程：关全部标签，回到欢迎页（最近列表保留，下次启动不再自动恢复）。"""
+        if not self._close_all_docs(confirm_unsaved=not discard_open):
+            return
         if hasattr(self, "mirror"):
             # noinspection PyBroadException
             try:
@@ -646,9 +690,9 @@ class FilesMixin(_Base):
                 pass
         if hasattr(self, "_reset_inspect_session"):
             self._reset_inspect_session()
-        self._close_all_docs()
         self.project_dir = ""
         self.project_tree.set_root("")
+        self.project_tree.clear_checks()
         if getattr(self, "project_panel", None) is not None:
             self.project_panel.set_actions_enabled(False)
             self.project_panel.filter.clear()
@@ -666,25 +710,31 @@ class FilesMixin(_Base):
         self._show_idle_center()
         self.console.log("已关闭工程", "工程")
 
-    def save_current(self) -> None:
+    def save_current(self) -> bool:
         """保存当前中央编辑器内容（用例/对象库/自定义关键字）为新格式 YAML。"""
         cur = self.center.currentWidget()
         if cur in (self.welcome, getattr(self, "empty_workspace", None)):
             self.console.log("没有可保存的内容", "文件", "WARNING")
-            return
-        if cur is self.map_editor:
-            self._save_map()
-        elif cur is self.keyword_editor:
-            self._save_keyword()
-        elif cur is self.dataconfig_editor:
-            self._save_dataconfig()
-        elif cur is self.suite_editor:
-            self._save_suite()
-        elif cur is self.testplan_editor:
-            self._save_testplan()
-        else:
-            self.save_current_case()
+            return False
+        try:
+            if cur is self.map_editor:
+                self._save_map()
+            elif cur is self.keyword_editor:
+                self._save_keyword()
+            elif cur is self.dataconfig_editor:
+                self._save_dataconfig()
+            elif cur is self.suite_editor:
+                self._save_suite()
+            elif cur is self.testplan_editor:
+                self._save_testplan()
+            else:
+                self.save_current_case()
+        except (OSError, TypeError, ValueError) as exc:
+            self.console.log(f"保存失败：{exc}", "文件", "ERROR")
+            QMessageBox.warning(self, "保存失败", str(exc))
+            return False
         self._resync_active_doc()   # 未命名→已保存：同步标签标题/路径
+        return True
 
     def _save_suite(self) -> None:
         ts = self.suite_editor.suite
@@ -697,7 +747,10 @@ class FilesMixin(_Base):
         elif path.endswith(".ts"):
             out = path + ".yaml"
         else:
-            out = os.path.join(self.project_dir or ".", (ts.name or "untitled") + ".ts.yaml")
+            out = os.path.join(
+                self.project_dir or ".",
+                validate_portable_name(ts.name or "untitled") + ".ts.yaml",
+            )
         serializer.save_testsuite(ts, out)
         ts.source_path = out
         self.console.log(f"已保存测试套：{out}", "文件")
@@ -713,7 +766,10 @@ class FilesMixin(_Base):
         elif path.endswith(".tp"):
             out = path + ".yaml"
         else:
-            out = os.path.join(self.project_dir or ".", (tp.name or "untitled") + ".tp.yaml")
+            out = os.path.join(
+                self.project_dir or ".",
+                validate_portable_name(tp.name or "untitled") + ".tp.yaml",
+            )
         serializer.save_testplan(tp, out)
         tp.source_path = out
         self.console.log(f"已保存测试计划：{out}", "文件")
@@ -740,7 +796,10 @@ class FilesMixin(_Base):
             out = path + ".yaml"
         else:
             base = (kd.ks_id or "untitled_verb")
-            out = os.path.join(self.project_dir or ".", base + ".ks.yaml")
+            out = os.path.join(
+                self.project_dir or ".",
+                validate_portable_name(base) + ".ks.yaml",
+            )
         serializer.save_keyword(kd, out)
         kd.source_path = out
         self.console.log(f"已保存自定义关键字：{out}", "文件")
@@ -759,7 +818,13 @@ class FilesMixin(_Base):
         elif path.endswith(".tc"):
             out = path + ".yaml"  # login.tc → login.tc.yaml
         else:
-            out = (path or tc.name or "untitled") + ".tc.yaml"
+            if path:
+                out = path + ".tc.yaml"
+            else:
+                out = os.path.join(
+                    self.project_dir or ".",
+                    validate_portable_name(tc.name or "untitled") + ".tc.yaml",
+                )
         serializer.save_testcase(tc, out)
         tc.source_path = out
         self.console.log(f"已保存用例：{out}", "文件")
@@ -778,7 +843,13 @@ class FilesMixin(_Base):
         elif path.endswith(".map"):
             out = path + ".yaml"
         else:
-            out = (path or mf.name or "untitled") + ".map.yaml"
+            if path:
+                out = path + ".map.yaml"
+            else:
+                out = os.path.join(
+                    self.project_dir or ".",
+                    validate_portable_name(mf.name or "untitled") + ".map.yaml",
+                )
         serializer.save_mapfile(mf, out)
         mf.source_path = out
         self.console.log(f"已保存对象库：{out}", "文件")
@@ -794,14 +865,19 @@ class FilesMixin(_Base):
         parent, name = dlg.parent_dir(), dlg.project_name()
         if not parent or not name:
             return
+        try:
+            name = validate_portable_name(name)
+        except ValueError as e:
+            self.console.log(f"新建工程失败：{e}", "工程", "ERROR")
+            return
         path = os.path.join(parent, name)
         if os.path.isdir(path):
             self.console.log(f"目录已存在，直接打开：{path}", "工程", "WARNING")
             self.open_project(path)
             return
         try:
-            self.create_project(parent, name)
-        except OSError as e:
+            path = self.create_project(parent, name)
+        except (OSError, ValueError) as e:
             self.console.log(f"新建工程失败：{e}", "工程", "ERROR")
             return
         settings.set_project_platform(path, dlg.project_platform())
@@ -814,6 +890,7 @@ class FilesMixin(_Base):
 
         自动建工程级共享的「数据配置」骨架 config/DataConfig.properties（空模板、内容不写死，
         对标参考工具的新建工程行为）；用例/套件/对象库等业务内容仍由用户按需手动新建。"""
+        name = validate_portable_name(name)
         path = os.path.join(parent, name)
         os.makedirs(path, exist_ok=True)
         cfg_dir = os.path.join(path, "config")
@@ -829,6 +906,12 @@ class FilesMixin(_Base):
             self.open_project(d)
 
     def open_project(self, directory: str) -> None:
+        directory = os.path.abspath(os.path.normpath(directory)) if directory else ""
+        if directory and not os.path.isdir(directory):
+            self.console.log(f"工程目录不存在：{directory}", "工程", "WARNING")
+            return
+        if not self._close_all_docs():
+            return
         # 切工程：停镜像/检视会话，避免仍绑定旧设备
         if hasattr(self, "mirror"):
             # noinspection PyBroadException
@@ -838,7 +921,7 @@ class FilesMixin(_Base):
                 pass
         if hasattr(self, "_reset_inspect_session"):
             self._reset_inspect_session()
-        self._close_all_docs()             # 切工程：先关旧工程的所有标签，别把旧工程的编辑残留带过来
+        self.project_tree.clear_checks()  # 批量运行勾选集属于旧工程，切换时不能带过去
         self.project_dir = directory
         self.project_tree.set_root(directory)
         if getattr(self, "project_panel", None) is not None:
@@ -889,7 +972,12 @@ class FilesMixin(_Base):
         name, ok = QInputDialog.getText(self, f"新建{label}", "名称：")
         if not ok or not name.strip():
             return
-        path = self.create_resource(kind, self._target_dir(), name.strip())
+        try:
+            path = self.create_resource(kind, self._target_dir(), name)
+        except (OSError, ValueError) as exc:
+            self.console.log(f"新建{label}失败：{exc}", "文件", "ERROR")
+            QMessageBox.warning(self, f"新建{label}失败", str(exc))
+            return
         self.project_tree.refresh()
         self._on_file_activated(path)
         if kind in ("case", "map", "keyword"):
@@ -900,67 +988,243 @@ class FilesMixin(_Base):
         if not self._require_project():
             return
         name, ok = QInputDialog.getText(self, "新建文件夹", "名称：")
-        if ok and name.strip():
-            path = self.create_folder(self._target_dir(), name.strip())
-            self.project_tree.refresh()
-            self.console.log(f"已新建文件夹：{path}", "工程")
+        if not ok:
+            return
+        try:
+            path = self.create_folder(self._target_dir(), name)
+        except (OSError, ValueError) as exc:
+            self.console.log(f"新建文件夹失败：{exc}", "工程", "ERROR")
+            QMessageBox.warning(self, "新建文件夹失败", str(exc))
+            return
+        self.project_tree.refresh()
+        self.console.log(f"已新建文件夹：{path}", "工程")
 
-    def save_as_dialog(self) -> None:
+    def save_as_dialog(self) -> bool:
         cur = self.center.currentWidget()
-        suffix = {"map": ".map.yaml", "keyword": ".ks.yaml"}.get(
-            "map" if cur is self.map_editor else "keyword" if cur is self.keyword_editor else "case",
-            ".tc.yaml")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "另存为", self.project_dir or "", f"YAML (*{suffix})")
-        if not path:
-            return
-        if cur is self.map_editor and self.map_editor.mapfile is not None:
-            serializer.save_mapfile(self.map_editor.mapfile, path)
-            self.map_editor.mapfile.source_path = path
-        elif cur is self.keyword_editor and self.keyword_editor.keyworddef is not None:
-            serializer.save_keyword(self.keyword_editor.keyworddef, path)
-            self.keyword_editor.keyworddef.source_path = path
-        elif self.case_editor.case is not None:
-            serializer.save_testcase(self.case_editor.case, path)
-            self.case_editor.case.source_path = path
-        else:
+        specs = {
+            self.case_editor: (".tc.yaml", (".tc.yaml", ".tc.yml")),
+            self.suite_editor: (".ts.yaml", (".ts.yaml", ".ts.yml")),
+            self.testplan_editor: (".tp.yaml", (".tp.yaml", ".tp.yml")),
+            self.map_editor: (".map.yaml", (".map.yaml", ".map.yml")),
+            self.keyword_editor: (".ks.yaml", (".ks.yaml", ".ks.yml")),
+            self.dataconfig_editor: (".properties", (".properties",)),
+        }
+        spec = specs.get(cur)
+        if spec is None:
             self.console.log("没有可另存的内容", "文件", "WARNING")
-            return
+            return False
+        suffix, allowed_suffixes = spec
+        file_type = "Properties" if suffix == ".properties" else "YAML"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "另存为", self.project_dir or "", f"{file_type} (*{suffix})")
+        if not path:
+            return False
+        try:
+            base = validate_portable_name(os.path.basename(path))
+            path = os.path.join(os.path.dirname(path), base)
+            if not path.lower().endswith(allowed_suffixes):
+                path += suffix
+                if os.path.lexists(path) and QMessageBox.question(
+                    self, "覆盖文件", f"覆盖「{os.path.basename(path)}」？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                ) != QMessageBox.StandardButton.Yes:
+                    return False
+            if cur is self.map_editor and self.map_editor.mapfile is not None:
+                serializer.save_mapfile(self.map_editor.mapfile, path)
+                self.map_editor.mapfile.source_path = path
+            elif cur is self.keyword_editor and self.keyword_editor.keyworddef is not None:
+                serializer.save_keyword(self.keyword_editor.keyworddef, path)
+                self.keyword_editor.keyworddef.source_path = path
+                self._refresh_custom_keywords()
+            elif cur is self.case_editor and self.case_editor.case is not None:
+                serializer.save_testcase(self.case_editor.case, path)
+                self.case_editor.case.source_path = path
+            elif cur is self.suite_editor and self.suite_editor.suite is not None:
+                serializer.save_testsuite(self.suite_editor.suite, path)
+                self.suite_editor.suite.source_path = path
+            elif cur is self.testplan_editor and self.testplan_editor.testplan is not None:
+                serializer.save_testplan(self.testplan_editor.testplan, path)
+                self.testplan_editor.testplan.source_path = path
+            elif cur is self.dataconfig_editor and self.dataconfig_editor.dataconfig is not None:
+                dataconfig_model.save(self.dataconfig_editor.dataconfig, path)
+                self.dataconfig_editor.dataconfig.source_path = path
+            else:
+                self.console.log("没有可另存的内容", "文件", "WARNING")
+                return False
+        except (OSError, TypeError, ValueError) as exc:
+            self.console.log(f"另存为失败：{exc}", "文件", "ERROR")
+            QMessageBox.warning(self, "另存为失败", str(exc))
+            return False
         self._resync_active_doc()   # 当前标签重定向到新路径（否则保存仍写旧文件）
         self.project_tree.refresh()
         if cur is self.keyword_editor:
             self._refresh_custom_keywords()
         self.console.log(f"已另存为：{path}", "文件")
+        return True
 
     def rename_dialog(self) -> None:
         path = self.project_tree.selected_path()
-        if not path or not os.path.exists(path):
+        if not path or not os.path.lexists(path):
             self.console.log("请先在工程树选中要重命名的文件或文件夹", "工程", "WARNING")
             return
+        old_norm = os.path.normcase(os.path.normpath(path))
+        project_norm = os.path.normcase(os.path.normpath(self.project_dir or ""))
+        renaming_project = bool(project_norm) and old_norm == project_norm
         old = os.path.basename(path)
         stem = display_name(old)                 # 去后缀显示名
         suffix = "" if os.path.isdir(path) else old[len(stem):]   # 原复合后缀(.tc.yaml/.properties…)
         new_name, ok = QInputDialog.getText(self, "重命名", "新名称：", text=stem)
         nn = (new_name or "").strip()
-        if ok and nn:
-            if suffix and not nn.endswith(suffix):    # 用户没带后缀则自动补回，保留文件类型
-                nn += suffix
-            newp = self.rename_path(path, nn)
-            self._rename_open_paths(path, newp)   # 若正开着，同步标签/模型路径，别让保存写回旧名
+        if not ok or not nn:
+            return
+        if suffix and not nn.endswith(suffix):    # 用户没带后缀则自动补回，保留文件类型
+            nn += suffix
+        try:
+            if renaming_project:
+                # 若当前工作目录落在该工程内，先切到父目录以免阻塞重命名或留下失效 cwd
+                try:
+                    cwd_real = os.path.normcase(os.path.realpath(os.getcwd()))
+                    old_real = os.path.normcase(os.path.realpath(path))
+                    if cwd_real == old_real or cwd_real.startswith(old_real + os.sep):
+                        parent_dir = os.path.dirname(path)
+                        if parent_dir and os.path.isdir(parent_dir):
+                            os.chdir(parent_dir)
+                except OSError:
+                    pass
+                # 先卸载并销毁 QFileSystemModel 的旧根，释放 Windows/macOS/Linux 目录监视句柄。
+                self.project_tree.set_root("")
+                QApplication.processEvents()
+                import errno as _errno
+                import sys as _sys
+                import time as _time
+
+                newp = ""
+                for attempt in range(6):
+                    try:
+                        newp = self.rename_path(path, nn)
+                        break
+                    except OSError as rename_exc:
+                        busy_err = isinstance(rename_exc, PermissionError) or getattr(
+                            rename_exc, "errno", None
+                        ) in (_errno.EACCES, _errno.EPERM, _errno.EBUSY)
+                        if not busy_err or attempt >= 5:
+                            if busy_err:
+                                fm_name = (
+                                    "资源管理器"
+                                    if _sys.platform == "win32"
+                                    else ("访达（Finder）" if _sys.platform == "darwin" else "文件管理器")
+                                )
+                                detail_msg = f"{rename_exc.strerror or rename_exc}（请确认未在{fm_name}、终端或其他程序中占用该目录）"
+                                if _sys.platform == "win32":
+                                    raise type(rename_exc)(
+                                        rename_exc.errno,
+                                        detail_msg,
+                                        rename_exc.filename,
+                                        getattr(rename_exc, "winerror", None),
+                                        rename_exc.filename2,
+                                    ) from rename_exc
+                                raise type(rename_exc)(
+                                    rename_exc.errno,
+                                    detail_msg,
+                                    rename_exc.filename,
+                                ) from rename_exc
+                            raise
+                        _time.sleep(0.05)
+                        QApplication.processEvents()
+            else:
+                newp = self.rename_path(path, nn)
+        except (OSError, ValueError) as exc:
+            # 文件名冲突、非法名称或锁定文件必须留在 Qt 槽内处理，不能让异常终止 IDE。
+            if renaming_project and os.path.isdir(path):
+                self.project_tree.set_root(path)
+            self.console.log(f"重命名失败：{exc}", "工程", "ERROR")
+            QMessageBox.warning(self, "重命名失败", str(exc))
+            return
+
+        self._rename_open_paths(path, newp)   # 若正开着，同步标签/模型路径，别让保存写回旧名
+        self.project_tree.rebase_paths(path, newp)
+        failures: dict[str, str] = {}
+        if renaming_project:
+            # 工程根也是应用状态；成功改名后所有消费者都切换到新路径，
+            # 否则下一次保存/刷新会继续访问已经不存在的旧目录。
+            self.project_dir = newp
+            self.project_tree.set_root(newp)
+            if getattr(self, "project_panel", None) is not None:
+                self.project_panel.set_actions_enabled(True)
+            self.param_form.set_project_dir(newp)
+            if hasattr(self, "search_results"):
+                self.search_results.set_project_dir(newp)
+            # Project defaults are keyed by normalized path in settings;
+            # carry the value forward and remove any stale old key.
+            updated = (
+                settings.rename_project_platform(path, newp),
+                settings.rename_mc_bound_project(path, newp),
+                settings.remember_project(newp),
+            )
+            if not all(updated):
+                failures[settings.config_dir()] = "工程设置未能保存"
+            self._sync_sidebar_project()
+            self._sync_window_title()
+        else:
             self.project_tree.refresh()
-            self._refresh_custom_keywords()       # 改的是 .ks 则关键字库按新名重扫
-            self.console.log(f"已重命名：{stem} → {display_name(os.path.basename(newp))}", "工程")
+        self._rewrite_project_references(path, newp, failures)
+        self._rebase_file_references(path, newp, failures)
+        self._rebase_testplan_refs(path, newp, failures)
+        self._rebase_map_refs(path, newp, failures)
+        self._refresh_open_case_platform_ui()
+        current = self.center.currentWidget()
+        if current is self.case_editor:
+            self._sync_step_editor_context("case")
+        elif current is self.suite_editor:
+            self._sync_step_editor_context("suite")
+        elif current is self.keyword_editor:
+            self._sync_step_editor_context("keyword")
+        self._refresh_custom_keywords()       # 改的是 .ks 或工程目录则按新路径重扫
+        self._sync_keyword_editor_platform()
+        if hasattr(self, "_sync_ios_backend_controls"):
+            self._sync_ios_backend_controls()
+        label = f"{stem} → {display_name(os.path.basename(newp))}"
+        if failures:
+            for file_path, reason in failures.items():
+                self.console.log(f"引用同步失败：{file_path}（{reason}）", "工程", "ERROR")
+            QMessageBox.warning(
+                self, "重命名后引用同步未完成",
+                f"{label}\n有 {len(failures)} 处未能同步。请在控制台查看文件路径和原因。",
+            )
+        else:
+            self.console.log(f"已重命名：{label}", "工程")
 
     def delete_dialog(self) -> None:
         path = self.project_tree.selected_path()
-        if not path or not os.path.exists(path):
+        if not path or not os.path.lexists(path):
             self.console.log("请先在工程树选中要删除的文件或文件夹", "工程", "WARNING")
             return
         kind = "文件夹" if os.path.isdir(path) else "文件"
         disp = display_name(os.path.basename(path))     # 去后缀显示(与工程树一致)，不暴露全路径
-        if confirm(self, "确认删除", f"确定删除{kind}「{disp}」？", danger=True):
-            self.delete_path(path)
+        deleting_project = bool(self.project_dir) and (
+            os.path.normcase(os.path.normpath(path))
+            == os.path.normcase(os.path.normpath(self.project_dir))
+        )
+        prompt = f"确定删除{kind}「{disp}」？"
+        if deleting_project and any(
+            not doc["path"] or doc["model"] != doc.get("saved_model") for doc in self._open_docs
+        ):
+            prompt += "\n打开文档中的未保存修改也将丢弃。"
+        if confirm(self, "确认删除", prompt, danger=True):
+            try:
+                self.delete_path(path)
+            except OSError as exc:
+                self.console.log(f"删除失败：{exc}", "工程", "ERROR")
+                QMessageBox.warning(self, "删除失败", str(exc))
+                return
+            self.project_tree.drop_paths(path)
             self._close_open_under(path)     # 删掉的文件/目录若正开着，关掉其标签，别让编辑区残留
+            if deleting_project:
+                # 删除当前工程根后立即退出工程态，避免 project_dir、最近工程和
+                # 面板继续指向已不存在的目录。
+                self.close_project(discard_open=True)
+                return
             self.project_tree.refresh()
             self._refresh_custom_keywords()  # 删的是 .ks 则从关键字库移除，避免残留失效条目
             self.console.log(f"已删除{kind}：{disp}", "工程")
@@ -979,12 +1243,16 @@ class FilesMixin(_Base):
                 continue
             n = os.path.normcase(os.path.normpath(dp))
             if n == norm or n.startswith(prefix):
-                self._on_tab_close(idx)
+                self._remove_doc(idx)
 
-    def _close_all_docs(self) -> None:
+    def _close_all_docs(self, *, confirm_unsaved: bool = True) -> bool:
         """关闭全部已打开标签（切换/打开工程时用，避免残留上一个工程的编辑内容）。"""
-        for idx in range(len(getattr(self, "_open_docs", [])) - 1, -1, -1):
-            self._on_tab_close(idx)
+        indexes = range(len(self._open_docs))
+        if confirm_unsaved and not self._confirm_close_docs(indexes):
+            return False
+        for idx in reversed(indexes):
+            self._remove_doc(idx)
+        return True
 
     def _rename_open_paths(self, old: str, new: str) -> None:
         """文件/目录被重命名后，同步「正是它 / 位于其下」的已打开标签：
@@ -1007,32 +1275,351 @@ class FilesMixin(_Base):
             model = doc.get("model")
             if model is not None and hasattr(model, "source_path"):
                 model.source_path = newp
+            saved_model = doc.get("saved_model")
+            if saved_model is not None and hasattr(saved_model, "source_path"):
+                saved_model.source_path = newp
             doc["title"] = display_name(os.path.basename(newp))
             self._tab_bar.setTabText(idx, doc["title"])
             self._tab_bar.setTabToolTip(idx, newp)
+
+    @staticmethod
+    def _rebased_path(path: str, old: str, new: str) -> str:
+        """Map a path that was observed after a rename back to its old name."""
+        norm = os.path.normcase(os.path.normpath(path))
+        new_norm = os.path.normcase(os.path.normpath(new))
+        prefix = new_norm + os.sep
+        if norm == new_norm:
+            return old
+        if norm.startswith(prefix):
+            return os.path.join(old, os.path.relpath(path, new))
+        return path
+
+    @staticmethod
+    def _rebase_relative_ref(ref: str, old_base: str, new_base: str,
+                             old: str, new: str) -> tuple[str, bool]:
+        """Rewrite a relative project reference when its target was renamed."""
+        raw = str(ref or "").strip()
+        if not raw:
+            return ref, False
+        native = to_native(raw)
+        target = native if os.path.isabs(native) else os.path.join(old_base, native)
+        norm = os.path.normcase(os.path.normpath(target))
+        old_norm = os.path.normcase(os.path.normpath(old))
+        prefix = old_norm + os.sep
+        if norm != old_norm and not norm.startswith(prefix):
+            return ref, False
+        target_new = new if norm == old_norm else os.path.join(
+            new, os.path.relpath(target, old)
+        )
+        if os.path.isabs(native):
+            return target_new, True
+        return os.path.relpath(target_new, new_base).replace(os.sep, "/"), True
+
+    @classmethod
+    def _rewrite_reference_nodes(cls, nodes, old_base: str, new_base: str,
+                                 old: str, new: str) -> bool:
+        changed = False
+        for node in nodes or []:
+            if isinstance(node, StepInnerCase):
+                value, did_change = cls._rebase_relative_ref(
+                    node.relative_path, old_base, new_base, old, new)
+                if did_change:
+                    node.relative_path = value
+                    changed = True
+            children = getattr(node, "children", None)
+            if children:
+                changed = cls._rewrite_reference_nodes(
+                    children, old_base, new_base, old, new
+                ) or changed
+        return changed
+
+    @staticmethod
+    def _reference_files(root: str, suffixes: tuple[str, ...], failures: dict[str, str]):
+        if not root:
+            return
+        def on_error(error):
+            failures[str(error.filename or root)] = str(error)
+
+        for dirpath, dirnames, filenames in os.walk(root, onerror=on_error):
+            dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+            for filename in filenames:
+                if filename.lower().endswith(suffixes):
+                    yield os.path.join(dirpath, filename)
+
+    @staticmethod
+    def _save_rebased_model(model, path: str) -> None:
+        writers = {
+            TestCase: serializer.save_testcase, TestSuite: serializer.save_testsuite,
+            TestPlan: serializer.save_testplan, KeywordDef: serializer.save_keyword,
+        }
+        staged = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(path), prefix=".autopilot-refs-", suffix=".yaml", delete=False,
+            ) as handle:
+                staged = handle.name
+            writers[type(model)](model, staged)
+            shutil.copymode(path, staged)
+            os.replace(staged, path)
+        finally:
+            if staged and os.path.exists(staged):
+                os.unlink(staged)
+
+    def _persist_rebased_models(self, root, yaml_suffixes, kinds, rewrite, failures) -> None:
+        # Rewrite the saved YAML and the editor buffer independently. The buffer can
+        # contain unrelated edits that the user has not chosen to save.
+        for path in self._reference_files(root, yaml_suffixes, failures):
+            try:
+                model = serializer.load(path)
+                if rewrite(model, path):
+                    self._save_rebased_model(model, path)
+            except (OSError, AttributeError, TypeError, ValueError, serializer.yaml.YAMLError) as exc:
+                failures[path] = str(exc)
+
+        for doc in self._open_docs:
+            if doc.get("kind") not in kinds:
+                continue
+            path = doc.get("path") or ""
+            rewrite(doc["model"], path)
+            baseline = doc.get("saved_model")
+            if baseline is not None and path and path not in failures:
+                rewrite(baseline, path)
+
+    def _rewrite_project_references(
+        self, old: str, new: str, failures: dict[str, str] | None = None,
+    ) -> None:
+        """持久化内嵌用例路径，同时保留旧工程的 XML 格式。"""
+        failures = {} if failures is None else failures
+        from ...runtime.legacy_references import rewrite_legacy_references
+
+        root = self.project_dir
+        if not root:
+            return
+        for path in self._reference_files(root, (".tc", ".ts", ".ks", ".tp"), failures):
+            try:
+                rewrite_legacy_references(path, root, old, new, self._rebase_relative_ref)
+            except (OSError, ValueError, TypeError) as exc:
+                failures[path] = str(exc)
+
+        def rewrite(model, doc_path: str) -> bool:
+            new_base = os.path.dirname(doc_path) if doc_path else root
+            old_base = os.path.dirname(self._rebased_path(doc_path, old, new)) if doc_path else root
+            shells = getattr(model, "shells", None)
+            if shells is None:
+                return self._rewrite_reference_nodes(
+                    getattr(model, "steps", []), old_base, new_base, old, new,
+                )
+            changed = False
+            for shell in shells:
+                changed = self._rewrite_reference_nodes(
+                    shell.steps, old_base, new_base, old, new,
+                ) or changed
+            return changed
+
+        suffixes = (".tc.yaml", ".tc.yml", ".ts.yaml", ".ts.yml", ".ks.yaml", ".ks.yml")
+        self._persist_rebased_models(root, suffixes, ("case", "suite", "keyword"), rewrite, failures)
+
+    def _rebase_testplan_refs(
+        self, old: str, new: str, failures: dict[str, str] | None = None,
+    ) -> None:
+        """更新工程内测试计划对重命名资源的引用。"""
+        failures = {} if failures is None else failures
+        root = self.project_dir
+        if not root:
+            return
+        old_root = self._rebased_path(root, old, new)
+
+        def rewrite_path(value: str, *, allow_config: bool = False) -> str:
+            if not value:
+                return value
+            updated, matched = self._rebase_relative_ref(value, old_root, root, old, new)
+            native = to_native(value)
+            if not matched and allow_config and not os.path.isabs(native):
+                candidate = os.path.join("config", native)
+                updated, matched = self._rebase_relative_ref(candidate, old_root, root, old, new)
+            return updated if matched else value
+
+        def rewrite(plan, _path: str) -> bool:
+            members = [rewrite_path(member) for member in plan.members]
+            dataconfig = rewrite_path(plan.dataconfig, allow_config=True)
+            changed = members != plan.members or dataconfig != plan.dataconfig
+            if changed:
+                plan.members = members
+                plan.dataconfig = dataconfig
+            return changed
+
+        self._persist_rebased_models(root, (".tp.yaml", ".tp.yml"), ("testplan",), rewrite, failures)
+
+    def _rebase_map_refs(
+        self, old: str, new: str, failures: dict[str, str] | None = None,
+    ) -> None:
+        """更新用例/测试套/自定义关键字中的 ``map::文件::元素`` 引用。"""
+        if os.path.isdir(new):
+            return
+
+        def stem(path: str) -> str:
+            name = os.path.basename(path)
+            map_name_lower = name.lower()
+            for suffix in (".map.yaml", ".map.yml", ".map"):
+                if map_name_lower.endswith(suffix):
+                    return name[: -len(suffix)]
+            return ""
+
+        old_stem, new_stem = stem(old), stem(new)
+        if not old_stem or not new_stem or old_stem == new_stem:
+            return
+        marker, replacement = f"map::{old_stem}::", f"map::{new_stem}::"
+
+        def rewrite_nodes(nodes) -> bool:
+            changed = False
+            for node in nodes or []:
+                for param in getattr(node, "params", []) or []:
+                    value = str(getattr(param, "value", "") or "")
+                    updated = value.replace(marker, replacement)
+                    if updated != value:
+                        param.value = updated
+                        changed = True
+                if rewrite_nodes(getattr(node, "children", []) or []):
+                    changed = True
+            return changed
+
+        def rewrite_model(model) -> bool:
+            if hasattr(model, "shells"):
+                changed = False
+                for shell in model.shells:
+                    changed = rewrite_nodes(shell.steps) or changed
+            else:
+                changed = rewrite_nodes(getattr(model, "steps", []) or [])
+            return changed
+
+        suffixes = (".tc.yaml", ".tc.yml", ".ts.yaml", ".ts.yml", ".ks.yaml", ".ks.yml")
+        self._persist_rebased_models(
+            self.project_dir, suffixes, ("case", "suite", "keyword"),
+            lambda model, _path: rewrite_model(model), {} if failures is None else failures,
+        )
+
+    def _rebase_file_references(
+        self, old: str, new: str, failures: dict[str, str] | None = None,
+    ) -> None:
+        """更新工程内图片、应用包和数据池等实际文件路径引用。
+
+        这些值既可能是工程相对路径，也可能是用户在文件选择器中留下的
+        绝对路径；目录/文件重命名后两种形式都必须同步，否则运行时会在
+        编辑器里看起来正常、执行时却找不到文件。
+        """
+        root = self.project_dir or ""
+        if not root:
+            return
+        old_base, new_base = self._rebased_path(root, old, new), root
+
+        def rewrite_path(raw: str) -> tuple[str, bool]:
+            value = str(raw or "")
+            if not value.strip() or "${" in value or "COLUMN(" in value:
+                return raw, False
+            updated, changed = self._rebase_relative_ref(
+                value.strip(), old_base, new_base, old, new
+            )
+            if not changed:
+                return raw, False
+            left = value[:len(value) - len(value.lstrip())]
+            right = value[len(value.rstrip()):]
+            return left + updated + right, True
+
+        def rewrite_datapool(spec: str) -> tuple[str, bool]:
+            text = str(spec or "")
+            match = re.match(r"^(\s*DATATABLE\s*\()(.*)(\)\s*)$", text, re.IGNORECASE | re.DOTALL)
+            if match is None:
+                return spec, False
+            inner = match.group(2)
+            source, sep, private = inner.rpartition(",")
+            if not sep:
+                source = inner
+            if source.strip().upper() == "NONE":
+                return spec, False
+            source_new, changed = rewrite_path(source)
+            if not changed:
+                return spec, False
+            return match.group(1) + source_new + (sep + private if sep else "") + match.group(3), True
+
+        def rewrite_nodes(nodes) -> bool:
+            changed = False
+            for node in nodes or []:
+                if hasattr(node, "datapool"):
+                    value, did_change = rewrite_datapool(getattr(node, "datapool", ""))
+                    if did_change:
+                        node.datapool = value
+                        changed = True
+                for param in getattr(node, "params", []) or []:
+                    pid = str(getattr(param, "param_id", "") or "")
+                    value = str(getattr(param, "value", "") or "")
+                    if "picture::" in value and value.strip().startswith("picture::"):
+                        prefix, _, image = value.partition("picture::")
+                        image_new, did_change = rewrite_path(image)
+                        if did_change:
+                            param.value = prefix + "picture::" + image_new
+                            changed = True
+                    elif pid in {"appFile", "datapool_source_path"}:
+                        value_new, did_change = rewrite_path(value)
+                        if did_change:
+                            param.value = value_new
+                            changed = True
+                if rewrite_nodes(getattr(node, "children", []) or []):
+                    changed = True
+            return changed
+
+        def rewrite_model(model) -> bool:
+            if model is None:
+                return False
+            changed = False
+            if hasattr(model, "datapool"):
+                value, did_change = rewrite_datapool(getattr(model, "datapool", ""))
+                if did_change:
+                    model.datapool = value
+                    changed = True
+            shells = getattr(model, "shells", None)
+            if shells is not None:
+                for shell in shells:
+                    changed = rewrite_nodes(shell.steps) or changed
+            else:
+                changed = rewrite_nodes(getattr(model, "steps", []) or []) or changed
+            return changed
+
+        suffixes = (".tc.yaml", ".tc.yml", ".ts.yaml", ".ts.yml", ".ks.yaml", ".ks.yml")
+        self._persist_rebased_models(
+            root, suffixes, ("case", "suite", "keyword"),
+            lambda model, _path: rewrite_model(model), {} if failures is None else failures,
+        )
 
     # ---- 纯逻辑助手（无对话框，便于测试与复用）----
     @staticmethod
     def create_resource(kind: str, directory: str, name: str) -> str:
         """在 directory 下新建一个资源文件，返回其路径。kind: case/suite/map/dataconfig。"""
+        name = validate_portable_name(name)
         os.makedirs(directory, exist_ok=True)
+
+        def allocate(filename: str) -> str:
+            candidate_path = os.path.join(directory, filename)
+            if os.path.lexists(candidate_path):
+                raise FileExistsError(f"目标资源已存在：{os.path.basename(candidate_path)}")
+            return candidate_path
+
         if kind == "case":
-            path = os.path.join(directory, name + ".tc.yaml")
+            path = allocate(name + ".tc.yaml")
             serializer.save_testcase(TestCase(name=name, source_path=path), path)
         elif kind == "suite":
-            path = os.path.join(directory, name + ".ts.yaml")
+            path = allocate(name + ".ts.yaml")
             serializer.save_testsuite(TestSuite(name=name, source_path=path), path)
         elif kind == "map":
-            path = os.path.join(directory, name + ".map.yaml")
+            path = allocate(name + ".map.yaml")
             serializer.save_mapfile(MapFile(name=name, source_path=path), path)
         elif kind == "dataconfig":
-            path = os.path.join(directory, name + ".properties")
+            path = allocate(name + ".properties")
             dataconfig_model.save(dataconfig_model.DataConfig(source_path=path), path)
         elif kind == "testplan":
-            path = os.path.join(directory, name + ".tp.yaml")
+            path = allocate(name + ".tp.yaml")
             serializer.save_testplan(TestPlan(name=name, source_path=path), path)
         elif kind == "keyword":
-            path = os.path.join(directory, name + ".ks.yaml")
+            path = allocate(name + ".ks.yaml")
             serializer.save_keyword(KeywordDef(ks_id=name, source_path=path), path)
         else:
             raise ValueError(f"未知资源类型: {kind}")
@@ -1040,19 +1627,61 @@ class FilesMixin(_Base):
 
     @staticmethod
     def create_folder(directory: str, name: str) -> str:
+        name = validate_portable_name(name)
         path = os.path.join(directory, name)
-        os.makedirs(path, exist_ok=True)
+        if os.path.lexists(path):
+            raise FileExistsError(f"目标文件夹已存在：{name}")
+        os.makedirs(path)
         return path
 
     @staticmethod
     def rename_path(path: str, new_name: str) -> str:
+        if not path or not os.path.lexists(path):
+            raise FileNotFoundError(path or "待重命名路径为空")
+        # Keep names portable across all three desktop targets.  ``basename``
+        # only knows the host separator, so validate both separators here.
+        new_name = validate_portable_name(new_name)
         newp = os.path.join(os.path.dirname(path), new_name)
+        old_exact = os.path.normpath(os.path.abspath(path))
+        new_exact = os.path.normpath(os.path.abspath(newp))
+        if old_exact == new_exact:
+            return path
+        # Windows and common macOS volumes can be case-insensitive. A
+        # case-only rename therefore looks like a collision until the source
+        # is moved through a temporary sibling.
+        same_entry = False
+        if os.path.lexists(newp):
+            try:
+                same_entry = os.path.samefile(path, newp)
+            except (OSError, ValueError):
+                same_entry = False
+            if not same_entry:
+                raise FileExistsError(f"目标名称已存在：{new_name}")
+        if same_entry:
+            parent = os.path.dirname(path)
+            tmp = os.path.join(
+                parent,
+                f".{os.path.basename(path)}.autopilot-rename-{uuid.uuid4().hex}",
+            )
+            os.rename(path, tmp)
+            # noinspection PyBroadException
+            try:
+                os.rename(tmp, newp)
+            except Exception:
+                try:
+                    os.rename(tmp, path)
+                except OSError:
+                    pass
+                raise
+            return newp
         os.rename(path, newp)
         return newp
 
     @staticmethod
     def delete_path(path: str) -> None:
-        if os.path.isdir(path):
+        if os.path.islink(path):
+            os.unlink(path)
+        elif os.path.isdir(path):
             shutil.rmtree(path)
         else:
             os.remove(path)

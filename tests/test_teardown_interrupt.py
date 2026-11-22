@@ -102,6 +102,32 @@ def test_flow_checkpoint_blocks_pause() -> None:
 
 def test_run_interrupted_is_not_fail() -> None:
     from autopilot.engine.executor import RunResult, StepResult
+    from autopilot.engine.suite import SuiteResult
+    from autopilot.report import cases_from_suite
+
     rr = RunResult(case_name="x")
     rr.results.append(StepResult("mobile_monkey", "", "CANCEL", "用户停止"))
-    assert rr.passed is True
+    assert rr.passed is False
+    assert rr.counts() == {"CANCEL": 1}
+    suite = SuiteResult(name="interrupted", results=[rr])
+    assert suite.case_counts()["cancelled"] == 1
+    assert suite.status == "cancelled"
+    assert cases_from_suite(suite)[0]["status"] == "cancelled"
+
+
+def test_cancel_between_steps_is_reported(tmp_path) -> None:
+    from autopilot.engine.suite import run_cases
+    from autopilot.report import cases_from_suite, write_report
+
+    cancel = threading.Event()
+    first = _case_with_after()
+    first.case.steps.append(Step("log", params=[ParamValue("message", "unreached")]))
+    suite = run_cases([first, TestCase(name="unstarted")], cancel_event=cancel,
+                      on_step=lambda _: cancel.set())
+
+    assert suite.status == "cancelled"
+    assert suite.case_counts() == {"total": 1, "passed": 0, "failed": 0, "cancelled": 1}
+    assert cases_from_suite(suite)[0]["status"] == "cancelled"
+    output = tmp_path / "report.html"
+    write_report(suite, str(output))
+    assert "执行已取消" in output.read_text(encoding="utf-8")

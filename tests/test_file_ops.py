@@ -47,7 +47,7 @@ def test_create_resources() -> bool:
                   and ts.name == "demo_suite"
                   and paths["dataconfig"].endswith(".properties"))
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("新建资源: ⏭ 跳过(", e, ")")
         return True
     print("新建 用例/套件/对象库/数据配置:", "✅" if ok else "❌")
@@ -68,7 +68,7 @@ def test_folder_rename_delete() -> bool:
             ok_del_dir = not os.path.exists(folder)
             win.close()
         ok = ok_rename and ok_del_file and ok_del_dir
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("文件夹/重命名/删除: ⏭ 跳过(", e, ")")
         return True
     print("文件夹/重命名/删除:", "✅" if ok else "❌")
@@ -83,7 +83,7 @@ def test_open_project() -> bool:
             win.open_project(other)
             ok = win.project_dir == other
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("打开工程: ⏭ 跳过(", e, ")")
         return True
     print("打开工程:", "✅" if ok else "❌")
@@ -106,7 +106,7 @@ def test_new_project_and_remember() -> bool:
                   and settings.last_project() == path
                   and path in settings.recent_projects())
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("新建工程/记住工程: ⏭ 跳过(", e, ")")
@@ -133,7 +133,7 @@ def test_keyword_resource_and_project_guard() -> bool:
         guard_ok = w2._require_project() is False
         w2.close()
         ok = kw_ok and target_ok and guard_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("关键字资源/无工程拦截: ⏭ 跳过(", e, ")")
@@ -171,7 +171,8 @@ def test_explorer_panel() -> bool:
         ic_ok = (_suffix_kind("a.tc.yaml") == ".tc" and _suffix_kind("x.properties") == ".properties"
                  and _file_icon("a.tc.yaml", False) is not None
                  and _file_icon("d", True) is not None
-                 and _file_icon("note.txt", False) is None)
+                 and _file_icon("note.txt", False) is not None
+                 and _file_icon("unknown.bin", False) is None)
         # 键盘 F2/Delete → 信号（独立树，选中根节点）
         with tempfile.TemporaryDirectory() as proj:
             open(os.path.join(proj, "k1.tc.yaml"), "w").close()
@@ -191,7 +192,7 @@ def test_explorer_panel() -> bool:
                                           Qt.KeyboardModifier.NoModifier))
             key_ok = sig["rename"] == 1 and sig["delete"] == 1
         ok = new_ok and disabled_ok and enabled_ok and ic_ok and key_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("工程浏览器(工具条/键盘/图标): ⏭ 跳过(", e, ")")
@@ -242,7 +243,7 @@ def test_tree_filter() -> bool:
             panel.filter.setText(""); settle()
             clear_ok = leaves() == ["smoke", "登录"]
         ok = all_ok and hit_ok and clear_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("工程树过滤: ⏭ 跳过(", e, ")")
@@ -252,7 +253,7 @@ def test_tree_filter() -> bool:
 
 
 def test_tree_resource_visibility() -> bool:
-    """工程树：apk/ipa/reports/logs/ios_monkey/.log 可见；diag_* 仍隐藏。"""
+    """工程树只留工程根、用例目录和可编辑资源；安装包/日志/报告不进树。"""
     try:
         import time
         from PyQt6.QtWidgets import QApplication
@@ -264,8 +265,16 @@ def test_tree_resource_visibility() -> bool:
             os.makedirs(os.path.join(proj, "reports"))
             os.makedirs(os.path.join(proj, "logs", "ios_monkey", "20260705_120000"))
             os.makedirs(os.path.join(proj, "diag_onboarding"))
+            os.makedirs(os.path.join(proj, "config"))
+            os.makedirs(os.path.join(proj, "login"))
             open(os.path.join(proj, "TEST001.tc.yaml"), "w").close()
+            open(os.path.join(proj, "login", "登录.tc.yaml"), "w").close()
+            open(os.path.join(proj, "smoke.ts.yaml"), "w").close()
+            open(os.path.join(proj, "config", "DataConfig.properties"), "w").close()
+            open(os.path.join(proj, "config", "api_env.yaml"), "w").close()
             open(os.path.join(proj, "TEST002_run.log"), "w").close()
+            open(os.path.join(proj, "autopilot_report.html"), "w").close()
+            open(os.path.join(proj, "autopilot_report_latest.html"), "w").close()
             open(os.path.join(proj, "apk", "app.apk"), "w").close()
             open(os.path.join(proj, "ipa", "app.ipa"), "w").close()
             open(os.path.join(proj, "reports", "r.html"), "w").close()
@@ -319,20 +328,27 @@ def test_tree_resource_visibility() -> bool:
             dirs = dir_names()
             files = file_basenames()
             ok = (
-                "apk" in dirs and "ipa" in dirs and "reports" in dirs
-                and "logs" in dirs and "ios_monkey" in dirs
-                and "20260705_120000" in dirs
+                "apk" not in dirs and "ipa" not in dirs and "reports" not in dirs
+                and "logs" not in dirs and "ios_monkey" not in dirs
+                and "20260705_120000" not in dirs
                 and "diag_onboarding" not in dirs
-                and "app.apk" in files and "app.ipa" in files and "r.html" in files
-                and "TEST001.tc.yaml" in files and "TEST002_run.log" in files
-                and "latest.json" in files and "summary.json" in files and "events.jsonl" in files
+                and "login" in dirs and "config" in dirs
+                and "app.apk" not in files and "app.ipa" not in files and "r.html" not in files
+                and "TEST002_run.log" not in files
+                and "autopilot_report.html" not in files
+                and "autopilot_report_latest.html" not in files
+                and "api_env.yaml" not in files
+                and "latest.json" not in files and "summary.json" not in files
+                and "events.jsonl" not in files
+                and "TEST001.tc.yaml" in files and "登录.tc.yaml" in files
+                and "smoke.ts.yaml" in files and "DataConfig.properties" in files
             )
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("工程树资源可见性: ⏭ 跳过(", e, ")")
         return True
-    print("工程树资源可见性(apk/ipa/html/隐藏空目录):", "✅" if ok else "❌", dirs, files)
+    print("工程树资源可见性(只留用例资源/隐藏产物目录):", "✅" if ok else "❌", dirs, files)
     return ok
 
 
@@ -408,7 +424,7 @@ def test_run_checked() -> bool:
             panel.tree.clear_checks()
         ok = ts_no_box and one_ok and all_ok and tri_ok and clear_ok and all_ok2 \
             and invert_clear_ok and invert_all_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("工程树勾选运行: ⏭ 跳过(", e, ")")
@@ -417,11 +433,42 @@ def test_run_checked() -> bool:
     return ok
 
 
+def test_checked_paths_follow_rename_and_delete() -> bool:
+    """批量运行勾选集随目录改名迁移，删除后清除旧路径。"""
+    try:
+        from autopilot.ui.widgets.project_panel import ProjectPanel
+        with tempfile.TemporaryDirectory() as base:
+            project = os.path.join(base, "project")
+            old_dir = os.path.join(project, "cases")
+            new_dir = os.path.join(project, "renamed_cases")
+            os.makedirs(old_dir)
+            old_case = os.path.join(old_dir, "login.tc.yaml")
+            new_case = os.path.join(new_dir, "login.tc.yaml")
+            open(old_case, "w").close()
+            panel = ProjectPanel()
+            panel.tree._proxy._checked = {panel.tree._proxy._norm(old_case): old_case}
+            panel.tree.rebase_paths(old_dir, new_dir)
+            # Simulate the filesystem rename after rebasing the in-memory set.
+            os.rename(old_dir, new_dir)
+            moved_ok = panel.tree.checked_paths() == [new_case]
+            panel.tree.drop_paths(new_dir)
+            dropped_ok = panel.tree.checked_paths() == []
+            panel.deleteLater()
+        ok = moved_ok and dropped_ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("勾选路径跟随重命名/删除: ⏭ 跳过(", e, ")")
+        return True
+    print("勾选路径跟随重命名/删除:", "✅" if ok else "❌")
+    return ok
+
+
 def test_rename_delete_dialog_display() -> bool:
     """重命名框去后缀显示且自动保留类型后缀；删除确认框只显示去后缀名、不暴露后缀/全路径。"""
     try:
         from PyQt6.QtWidgets import QInputDialog
-        from autopilot.ui import confirm as confirm_mod
+        from autopilot.ui.main_window import files as files_mod
         with tempfile.TemporaryDirectory() as proj:
             win = _win(proj)
             case = win.create_resource("case", proj, "123")     # 123.tc.yaml
@@ -438,19 +485,19 @@ def test_rename_delete_dialog_display() -> bool:
             # 删除确认框：捕获文案，应含去后缀名「999」，不含 .tc.yaml / 路径分隔符
             win.project_tree.selected_path = lambda: renamed
             seen = {}
-            orig_q = confirm_mod.confirm
-            confirm_mod.confirm = (lambda _s, _t, text, *a, **k:
-                                   (seen.__setitem__("t", text) or True))
+            orig_q = files_mod.confirm
+            files_mod.confirm = (lambda _s, _t, text, *a, **k:
+                                 (seen.__setitem__("t", text) or True))
             try:
                 win.delete_dialog()
             finally:
-                confirm_mod.confirm = orig_q
+                files_mod.confirm = orig_q
             t = seen.get("t", "")
             msg_ok = ("999" in t and ".tc.yaml" not in t and "/" not in t and "\\" not in t)
             del_ok = not os.path.exists(renamed)
             win.close()
         ok = rename_ok and msg_ok and del_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("重命名/删除框去后缀: ⏭ 跳过(", e, ")")
@@ -462,7 +509,7 @@ def test_rename_delete_dialog_display() -> bool:
 def test_delete_closes_open_tab() -> bool:
     """删除正在编辑的用例：应关闭其标签，编辑区不残留已删内容（对齐用户反馈的 bug）。"""
     try:
-        from autopilot.ui import confirm as confirm_mod
+        from autopilot.ui.main_window import files as files_mod
         with tempfile.TemporaryDirectory() as proj:
             win = _win(proj)
             case = win.create_resource("case", proj, "TEST001")
@@ -471,19 +518,19 @@ def test_delete_closes_open_tab() -> bool:
             win.project_tree.selected_path = lambda: case
             refreshed = {"n": 0}                      # 探针：删除后应刷新关键字库(.ks 同步)
             win._refresh_custom_keywords = lambda: refreshed.__setitem__("n", refreshed["n"] + 1)
-            orig = confirm_mod.confirm
-            confirm_mod.confirm = lambda *a, **k: True    # 自动确认删除
+            orig = files_mod.confirm
+            files_mod.confirm = lambda *a, **k: True    # 自动确认删除
             try:
                 win.delete_dialog()
             finally:
-                confirm_mod.confirm = orig
+                files_mod.confirm = orig
             closed = (win._doc_index(case) < 0 and not os.path.exists(case)
                       and refreshed["n"] >= 1)
             # 删完无其它标签、工程仍开着 → 空编辑区，而不是欢迎页
             back_to_idle = win.center.currentWidget() is win.empty_workspace
             win.close()
         ok = opened and closed and back_to_idle
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("删除关闭标签: ⏭ 跳过(", e, ")")
@@ -509,7 +556,7 @@ def test_rename_and_switch_project_sync() -> bool:
                 QInputDialog.getText = orig_in
             newp = os.path.join(proj, "BBB.tc.yaml")
             idx = win._doc_index(newp)
-            rename_ok = (idx >= 0 and win._doc_index(case) < 0
+            rename_ok = (idx >= 0 > win._doc_index(case)
                          and getattr(win._open_docs[idx]["model"], "source_path", "") == newp)
             with tempfile.TemporaryDirectory() as proj2:
                 win.open_project(proj2)                  # 切工程
@@ -517,13 +564,263 @@ def test_rename_and_switch_project_sync() -> bool:
                              and win.center.currentWidget() is win.empty_workspace)
             win.close()
         ok = rename_ok and switch_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("重命名同步/切工程清标签: ⏭ 跳过(", e, ")")
         return True
     print("重命名同步标签 + 切工程清空标签:", "✅" if ok else "❌")
     return ok
+
+
+def test_rename_project_root_sync() -> bool:
+    """重命名工程根后，工程上下文、标签和最近工程路径全部切到新目录。"""
+    try:
+        import time
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QInputDialog
+
+        def select_tree_path(window, path):
+            tree = window.project_tree
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline:
+                _APP.processEvents()
+                source_index = tree._fs.index(os.path.realpath(path))
+                index = tree._proxy.mapFromSource(source_index)
+                if index.isValid():
+                    tree.setCurrentIndex(index)
+                    return index
+                time.sleep(0.01)
+            raise AssertionError(f"工程树未加载目标路径：{path}")
+
+        with tempfile.TemporaryDirectory() as parent:
+            proj = os.path.join(parent, "plantscope")
+            os.makedirs(proj)
+            win = _win(proj)
+            from autopilot.runtime import settings
+            settings.set_project_platform(proj, "web")
+            settings.set_mc_bound_project_id(proj, "platform-project")
+            newp = os.path.join(parent, "renamed_project")
+            settings.set_project_platform(newp, "android")
+            settings.set_mc_bound_project_id(newp, "stale-platform-project")
+            case = win.create_resource("case", proj, "ROOT_CASE")
+            emitted_paths = []
+            win.project_tree.fileActivated.connect(emitted_paths.append)
+            case_index = select_tree_path(win, case)
+            win.project_tree._emit_activated(case_index)
+            win.project_tree._proxy.setData(case_index, Qt.CheckState.Checked.value,
+                                            Qt.ItemDataRole.CheckStateRole)
+            paths_before_ok = (emitted_paths == [case] and win.project_tree.checked_paths() == [case])
+            select_tree_path(win, proj)
+            logical_root_ok = win.project_tree.selected_path() == proj
+            orig_in = QInputDialog.getText
+            QInputDialog.getText = staticmethod(lambda *a, **k: ("renamed_project", True))
+            try:
+                win.rename_dialog()
+            finally:
+                QInputDialog.getText = orig_in
+            new_case = os.path.join(newp, "ROOT_CASE.tc.yaml")
+            idx = win._doc_index(new_case)
+            ok = (paths_before_ok and logical_root_ok and not os.path.exists(proj) and os.path.isdir(newp)
+                  and os.path.normpath(win.project_dir) == os.path.normpath(newp)
+                  and os.path.normpath(win.project_tree._root) == os.path.normpath(newp)
+                  and idx >= 0 and os.path.normpath(win._open_docs[idx]["path"]) == os.path.normpath(new_case)
+                  and settings.project_platform(newp) == "web"
+                  and settings.project_platform(proj) == ""
+                  and settings.mc_bound_project_id(newp) == "platform-project"
+                  and settings.mc_bound_project_id(proj) == ""
+                  and win.project_tree.checked_paths() == [new_case])
+            win.close()
+            # 未配置的源工程也不能继承目标路径上旧工程的配置/远端绑定。
+            plain = os.path.join(parent, "plain_project")
+            reused = os.path.join(parent, "reused_project")
+            os.makedirs(plain)
+            settings.set_project_platform(reused, "ios")
+            settings.set_mc_bound_project_id(reused, "deleted-project-binding")
+            win = _win(plain)
+            select_tree_path(win, plain)
+            QInputDialog.getText = staticmethod(lambda *a, **k: ("reused_project", True))
+            try:
+                win.rename_dialog()
+            finally:
+                QInputDialog.getText = orig_in
+            ok = (ok and not os.path.exists(plain) and os.path.isdir(reused)
+                  and settings.project_platform(reused) == ""
+                  and settings.mc_bound_project_id(reused) == "")
+            win.close()
+        print("重命名工程根同步上下文/标签:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("重命名工程根同步: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_rebases_checked_case_paths() -> bool:
+    """Renaming a folder keeps batch-run selections on the new paths."""
+    try:
+        from PyQt6.QtWidgets import QInputDialog
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            folder = win.create_folder(proj, "suite")
+            case = win.create_resource("case", folder, "SELECTED")
+            win.project_tree._proxy._checked = {
+                win.project_tree._proxy._norm(case): case
+            }
+            win.project_tree.selected_path = lambda: folder
+            orig_in = QInputDialog.getText
+            QInputDialog.getText = staticmethod(lambda *a, **k: ("renamed_suite", True))
+            try:
+                win.rename_dialog()
+            finally:
+                QInputDialog.getText = orig_in
+            new_case = os.path.join(proj, "renamed_suite", "SELECTED.tc.yaml")
+            ok = win.project_tree.checked_paths() == [new_case]
+            win.close()
+        print("重命名同步批量勾选路径:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("重命名同步批量勾选路径: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_delete_project_clears_project_state() -> bool:
+    """Deleting the open project root exits project mode cleanly."""
+    try:
+        from autopilot.ui.main_window import files as files_mod
+        from autopilot.runtime import settings
+        with tempfile.TemporaryDirectory() as parent:
+            proj = os.path.join(parent, "to_delete")
+            os.makedirs(proj)
+            win = _win(proj)
+            orig = files_mod.confirm
+            files_mod.confirm = lambda *a, **k: True
+            try:
+                win.project_tree.selected_path = lambda: proj
+                win.delete_dialog()
+            finally:
+                files_mod.confirm = orig
+            ok = (not os.path.exists(proj) and (win.project_dir or "") == ""
+                  and not win.project_tree._root and settings.last_project() == "")
+            win.close()
+        print("删除工程根同步工程状态:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("删除工程根同步工程状态: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_failure_is_handled() -> bool:
+    """目标名称冲突时提示失败，原文件和工程状态保持不变。"""
+    try:
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            first = win.create_resource("case", proj, "first")
+            second = win.create_resource("case", proj, "second")
+            win.project_tree.selected_path = lambda: first
+            orig_in, orig_warn = QInputDialog.getText, QMessageBox.warning
+            seen = {}
+            QInputDialog.getText = staticmethod(lambda *a, **k: ("second", True))
+            QMessageBox.warning = staticmethod(lambda *a, **k: seen.setdefault("shown", True))
+            try:
+                win.rename_dialog()
+            finally:
+                QInputDialog.getText, QMessageBox.warning = orig_in, orig_warn
+            ok = (os.path.exists(first) and os.path.exists(second)
+                  and seen.get("shown") is True and win.project_dir == proj)
+            win.close()
+        print("重命名冲突异常处理:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("重命名冲突处理: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_case_only_rename() -> bool:
+    """大小写不敏感文件系统上也能完成只改大小写的重命名。"""
+    try:
+        from autopilot.ui.main_window.files import FilesMixin
+        with tempfile.TemporaryDirectory() as proj:
+            original = os.path.join(proj, "CaseProject")
+            os.makedirs(original)
+            renamed = FilesMixin.rename_path(original, "caseproject")
+            ok = (os.path.basename(renamed) == "caseproject"
+                  and os.path.isdir(renamed)
+                  and os.listdir(proj) == ["caseproject"])
+        print("大小写重命名:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("大小写重命名: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_rejects_foreign_path_separator() -> bool:
+    """POSIX must reject Windows separators so names remain portable."""
+    try:
+        from autopilot.ui.main_window.files import FilesMixin
+        with tempfile.TemporaryDirectory() as proj:
+            original = os.path.join(proj, "portable")
+            os.makedirs(original)
+            rejected = True
+            for candidate in ("portable/child", r"portable\child", "portable\x00child"):
+                try:
+                    FilesMixin.rename_path(original, candidate)
+                except ValueError:
+                    continue
+                rejected = False
+                break
+            ok = rejected and os.path.isdir(original)
+        print("跨平台路径分隔符校验:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("跨平台路径分隔符校验: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_create_rejects_path_escape_name() -> bool:
+    """创建资源/文件夹也必须拒绝能逃逸工程目录的名称。"""
+    try:
+        from autopilot.ui.main_window.files import FilesMixin
+        with tempfile.TemporaryDirectory() as proj:
+            checks = []
+            for fn, args in (
+                (FilesMixin.create_resource, ("case", proj, r"nested\\case")),
+                (FilesMixin.create_folder, (proj, "../outside")),
+            ):
+                try:
+                    fn(*args)
+                except ValueError:
+                    checks.append(True)
+                else:
+                    checks.append(False)
+            first = FilesMixin.create_resource("case", proj, "same")
+            try:
+                FilesMixin.create_resource("case", proj, "same")
+            except FileExistsError:
+                duplicate_rejected = True
+            else:
+                duplicate_rejected = False
+            ok = (all(checks) and duplicate_rejected and os.path.isfile(first)
+                  and not os.path.exists(os.path.join(proj, "..", "outside")))
+        print("创建名称路径逃逸校验:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("创建名称路径逃逸校验: ⏭ 跳过(", e, ")")
+        return True
 
 
 def test_keyword_usage_decay() -> bool:
@@ -642,7 +939,7 @@ def test_inspector_crop_save() -> bool:
             ok = (cancel_ok and saved and loc == expect
                   and loc == "picture::images/login_btn.png")
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("框选图片保存: ⏭ 跳过(", e, ")")
@@ -654,7 +951,7 @@ def test_inspector_crop_save() -> bool:
 def test_platform_marker_and_guard() -> bool:
     """用例平台标记：序列化往返保留 platform；set_case_platform 写文件；执行护栏拦不匹配设备。"""
     try:
-        from autopilot.ui import confirm as confirm_mod
+        from autopilot.ui.main_window import run as run_mod
         from autopilot.model.testcase import TestCase, Step, ParamValue
         # 1) 序列化往返保留 platform
         tc = TestCase(name="c", platform="ios")
@@ -669,13 +966,13 @@ def test_platform_marker_and_guard() -> bool:
             # 3) 护栏：标 ios 但只连 android → 硬阻断（不可强制）
             ios_tc = serializer.load(case)
             win._devices = (["AND1"], [])          # 只有 Android
-            orig = confirm_mod.confirm
+            orig = run_mod.confirm
             try:
                 blocked = win._platform_guard([ios_tc]) is False
                 still_blocked = win._platform_guard([ios_tc]) is False
                 # 已连对应设备 → 直接放行(不弹)
                 win._devices = ([], ["IOSU"])
-                confirm_mod.confirm = lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该弹"))
+                run_mod.confirm = lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该弹"))
                 match_ok = win._platform_guard([ios_tc]) is True
                 # 未标平台 + 无工程默认 → 放行
                 win._devices = ([], [])
@@ -684,7 +981,7 @@ def test_platform_marker_and_guard() -> bool:
                 from autopilot.runtime import settings
                 settings.set_project_platform(proj, "ios")
                 win._devices = (["AND1"], [])     # 只连 Android
-                confirm_mod.confirm = lambda *a, **k: False
+                run_mod.confirm = lambda *a, **k: False
                 default_block_ok = win._platform_guard([TestCase(name="x")]) is False
                 mixed_tc = TestCase(name="mixed")
                 mixed_tc.case.steps = [
@@ -692,16 +989,16 @@ def test_platform_marker_and_guard() -> bool:
                     Step("mobile_app_start", "", params=[ParamValue("type", "iOS")]),
                 ]
                 win._devices = (["AND1"], ["IOS1"])
-                confirm_mod.confirm = lambda *a, **k: False
+                run_mod.confirm = lambda *a, **k: False
                 mixed_block_ok = win._platform_guard([mixed_tc]) is False
-                confirm_mod.confirm = lambda *a, **k: True
+                run_mod.confirm = lambda *a, **k: True
                 mixed_force_ok = win._platform_guard([mixed_tc]) is True
             finally:
-                confirm_mod.confirm = orig
+                run_mod.confirm = orig
             win.close()
         ok = (rt_ok and set_ok and blocked and still_blocked and match_ok
               and noplat_ok and default_block_ok and mixed_block_ok and mixed_force_ok)
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("用例平台标记/护栏: ⏭ 跳过(", e, ")")
@@ -735,7 +1032,7 @@ def test_case_shell_move() -> bool:
         back_ok = ed.move_selected_to_shell("case") and len(tc.case.steps) == 1
         ed.deleteLater()
         ok = targets_ok and moved and model_ok and rt_ok and back_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("用例段移动: ⏭ 跳过(", e, ")")
         return True
@@ -755,14 +1052,341 @@ def test_new_project_dialog() -> bool:
         path = dlg.target_path()
         ok_enabled = dlg.btn_ok.isEnabled()
         path_ok = path.endswith(os.path.join("base", "MyProj")) and "MyProj" in dlg.lbl_preview.text()
+        dlg.ed_name.setText(r"bad\name")
+        portable_invalid_disabled = not dlg.btn_ok.isEnabled()
         dlg.deleteLater()
-        ok = empty_disabled and ok_enabled and path_ok
-    except Exception as e:  # noqa: BLE001
+        ok = empty_disabled and ok_enabled and path_ok and portable_invalid_disabled
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("新建工程对话框: ⏭ 跳过(", e, ")")
         return True
     print("新建工程对话框(位置+名称合并/路径预览/缺项禁用):", "✅" if ok else "❌")
     return ok
+
+
+def test_save_as_supports_all_editors_and_keeps_suffix() -> bool:
+    """另存为应覆盖工程资源编辑器，并为裸名称补回资源后缀。"""
+    try:
+        from PyQt6.QtWidgets import QFileDialog
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            suite = win.create_resource("suite", proj, "source")
+            win._on_file_activated(suite)
+            original = QFileDialog.getSaveFileName
+            QFileDialog.getSaveFileName = staticmethod(
+                lambda *a, **k: (os.path.join(proj, "copied_suite"), "YAML (*.ts.yaml)"))
+            try:
+                win.save_as_dialog()
+            finally:
+                QFileDialog.getSaveFileName = original
+            target = os.path.join(proj, "copied_suite.ts.yaml")
+            idx = win._doc_index(target)
+            ok = (os.path.exists(target) and idx >= 0
+                  and win._open_docs[idx]["path"] == target)
+            win.close()
+        print("另存为资源类型/后缀/标签同步:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("另存为资源类型/后缀/标签同步: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_rebases_testplan_members() -> bool:
+    """重命名用例目录后，磁盘测试计划成员路径同步更新。"""
+    try:
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            cases = os.path.join(proj, "cases")
+            os.makedirs(cases)
+            case = win.create_resource("case", cases, "login")
+            plan_path = win.create_resource("testplan", proj, "nightly")
+            plan = serializer.load(plan_path)
+            plan.members = ["cases/login.tc.yaml"]
+            serializer.save_testplan(plan, plan_path)
+            win._on_file_activated(plan_path)
+            opened = win.testplan_editor.testplan
+            opened.name = "unsaved name"
+            renamed = os.path.join(proj, "smoke_cases")
+            os.rename(cases, renamed)
+            win._rebase_testplan_refs(cases, renamed)
+            updated = serializer.load(plan_path)
+            ok = (updated.members == opened.members == ["smoke_cases/login.tc.yaml"]
+                  and updated.name == "nightly" and opened.name == "unsaved name"
+                  and os.path.exists(os.path.join(renamed, os.path.basename(case))))
+            from unittest.mock import patch
+            from PyQt6.QtWidgets import QMessageBox
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard):
+                win.close()
+        print("测试计划成员随目录重命名:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("测试计划成员随目录重命名: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_rebases_map_references() -> bool:
+    """重命名对象库后，用例和测试套的每个段都同步 map:: 引用。"""
+    try:
+        from autopilot.model.testcase import ParamValue, Step
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            case_path = win.create_resource("case", proj, "login")
+            suite_path = win.create_resource("suite", proj, "lifecycle")
+            map_path = win.create_resource("map", proj, "old_map")
+            tc = serializer.load(case_path)
+            suite = serializer.load(suite_path)
+            for model, path, save in (
+                (tc, case_path, serializer.save_testcase),
+                (suite, suite_path, serializer.save_testsuite),
+            ):
+                for shell in model.shells:
+                    shell.steps = [Step(keyword_id="mobile_click", params=[
+                        ParamValue("locator", f"map::old_map::{shell.name}_submit")])]
+                save(model, path)
+            renamed = os.path.join(proj, "new_map.map.yaml")
+            os.rename(map_path, renamed)
+            win._rebase_map_refs(map_path, renamed)
+            folder_old = os.path.join(proj, "new_map.map")
+            folder_new = os.path.join(proj, "folder_alias.map")
+            os.makedirs(folder_old)
+            os.rename(folder_old, folder_new)
+            win._rebase_map_refs(folder_old, folder_new)
+            updated_models = [serializer.load(path) for path in (case_path, suite_path)]
+            ok = all(
+                shell.steps[0].params[0].value == f"map::new_map::{shell.name}_submit"
+                for model in updated_models for shell in model.shells
+            )
+            win.close()
+        print("对象库引用随重命名:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("对象库引用随重命名: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_rebases_inner_case_references() -> bool:
+    """Renaming a case directory updates StepInnerCase relative paths."""
+    try:
+        import ntpath
+        import posixpath
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from autopilot.model.testcase import StepInnerCase
+        from autopilot.runtime import paths as paths_mod
+        from autopilot.ui.main_window import files as files_mod
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            source_dir = os.path.join(proj, "flows")
+            target_dir = os.path.join(proj, "shared")
+            os.makedirs(source_dir)
+            os.makedirs(target_dir)
+            source = win.create_resource("case", source_dir, "main")
+            win.create_resource("case", target_dir, "child")
+            tc = serializer.load(source)
+            tc.case.steps = [StepInnerCase(relative_path="../shared/child.tc.yaml")]
+            serializer.save_testcase(tc, source)
+            open_source = win.create_resource("case", source_dir, "open_main")
+            serializer.save_testcase(tc, open_source)
+            legacy_source = os.path.join(source_dir, "legacy.tc")
+            Path(legacy_source).write_text(
+                '<root><case><stepinnercase relativepath="../shared/child.tc.yaml"/>'
+                '</case></root>', encoding="utf-8")
+            open_models = []
+            for path in (open_source, legacy_source):
+                win._on_file_activated(path)
+                model = win._open_docs[win._doc_index(path)]["model"]
+                model.name = "unsaved-name"
+                open_models.append(model)
+            renamed = os.path.join(proj, "renamed_shared")
+            os.rename(target_dir, renamed)
+            win._rewrite_project_references(target_dir, renamed)
+            updated = serializer.load(source)
+            open_saved = serializer.load(open_source)
+            expected = "../renamed_shared/child.tc.yaml"
+            ok = (updated.case.steps[0].relative_path == expected
+                  and all(model.case.steps[0].relative_path == expected
+                          and model.name == "unsaved-name" for model in open_models)
+                  and open_saved.name == tc.name
+                  and open_saved.case.steps[0].relative_path == expected
+                  and f'relativepath="{expected}"' in Path(legacy_source).read_text(encoding="utf-8"))
+            from PyQt6.QtWidgets import QMessageBox
+            with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard):
+                win.close()
+        # 两类宿主路径算法都接受项目中已有的 Windows/POSIX 相对分隔符。
+        for path_api, separator, root in (
+            (posixpath, "/", "/project"), (ntpath, "\\", "C:\\project"),
+        ):
+            host_os = SimpleNamespace(path=path_api, sep=separator)
+            with patch.object(files_mod, "os", host_os), patch.object(paths_mod, "os", host_os):
+                for ref in ("../shared/child.tc.yaml", r"..\shared\child.tc.yaml"):
+                    actual = files_mod.FilesMixin._rebase_relative_ref(
+                        ref, path_api.join(root, "flows"), path_api.join(root, "flows"),
+                        path_api.join(root, "shared"), path_api.join(root, "renamed_shared"))
+                    ok = actual == ("../renamed_shared/child.tc.yaml", True) and ok
+        print("内嵌用例引用随目录重命名:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("内嵌用例引用随目录重命名: ⏭ 跳过(", e, ")")
+        return True
+
+
+def test_rename_preserves_legacy_xml_references() -> bool:
+    """未打开的旧资源更新引用时保留 XML 和未识别扩展字段。"""
+    from pathlib import Path
+    from xml.sax.saxutils import escape
+    from lxml import etree
+    from autopilot.model import loader
+
+    with tempfile.TemporaryDirectory() as parent:
+        project = Path(parent, "legacy_project")
+        assets = project / "assets"
+        assets.mkdir(parents=True)
+        (assets / "child.tc").write_text('<root><case/></root>', encoding="utf-8")
+        for name in ("button.png", "app.apk", "rows.csv", "DataConfig.properties"):
+            (assets / name).write_text("fixture", encoding="utf-8")
+        (project / "old_map.map").write_text('<root/>', encoding="utf-8")
+        absolute_app = escape(str(assets / "app.apk"))
+        steps = (
+            '<step id="mobile_click"><param id="locator">map::old_map::submit</param>'
+            '<param id="image">picture::assets/button.png</param>'
+            f'<param id="appFile">{absolute_app}</param>'
+            '<param id="datapool_source_path">assets/rows.csv</param></step>'
+            '<stepset name="rows" datapool="DATATABLE(assets/rows.csv,true)"/>'
+            '<stepset name="spaced" datapool=" datatable ( assets/rows.csv , true ) "/>'
+            '<stepset name="simple" datapool="DATATABLE(assets/rows.csv)"/>'
+        )
+        extension = '<!--retain--><extension custom="keep"><![CDATA[opaque <data>]]></extension>'
+        documents = {
+            "main.tc": ('<root db_id="keep-case"><datapool>DATATABLE(assets/rows.csv,false)</datapool>'
+                        + ''.join(f'<{shell}>{steps}</{shell}>' for shell in ("before", "case", "after", "fault"))
+                        + '<case_extra><stepinnercase relativepath="assets/child.tc"/></case_extra>'
+                        + extension + '</root>'),
+            "lifecycle.ts": ('<root db_id="keep-suite">'
+                             + ''.join(f'<{shell}>{steps}</{shell}>' for shell in ("before", "after", "fault"))
+                             + extension + '</root>'),
+            "action.ks": '<root><id>action</id><steps>' + steps + '</steps>' + extension + '</root>',
+            "nightly.tp": ('<root><testplan><local><name>nightly</name>'
+                           '<dataconfig>assets/DataConfig.properties</dataconfig><faulttimes>2</faulttimes>'
+                           '</local><member relativepath="assets/child.tc"/>'
+                           '<case>assets/child.tc</case></testplan>' + extension + '</root>'),
+        }
+        # 内嵌用例必须位于真实 case 节点内，且该节点保留全部其他步骤。
+        documents["main.tc"] = documents["main.tc"].replace(
+            '</case>', '<stepinnercase relativepath="assets/child.tc"/></case>')
+        for name, text in documents.items():
+            standalone = {"main.tc": ' standalone="yes"', "lifecycle.ts": ' standalone="no"'}.get(name, "")
+            (project / name).write_text(f'<?xml version="1.0" encoding="UTF-8"{standalone}?>\n' + text,
+                                        encoding="utf-8")
+        untouched = project / "untouched.tc"
+        untouched.write_text('<root custom="untouched">\n  <case/>\n</root>\n', encoding="utf-8")
+        untouched_bytes = untouched.read_bytes()
+        win = _win(str(project))
+        renamed_assets = project / "resources"
+        os.rename(assets, renamed_assets)
+        win._rewrite_project_references(str(assets), str(renamed_assets))
+        old_map, new_map = project / "old_map.map", project / "new_map.map"
+        os.rename(old_map, new_map)
+        win._rewrite_project_references(str(old_map), str(new_map))
+        renamed_project = Path(parent, "renamed_legacy_project")
+        win.project_tree.set_root("")
+        _APP.processEvents()
+        os.rename(project, renamed_project)
+        win.project_dir = str(renamed_project)
+        win._rewrite_project_references(str(project), str(renamed_project))
+        expected_app = str(renamed_project / "resources" / "app.apk")
+        ok = True
+        for name, load in (
+            ("main.tc", loader.load_testcase), ("lifecycle.ts", loader.load_testsuite),
+            ("action.ks", loader.load_keyword), ("nightly.tp", loader.load_testplan),
+        ):
+            path = renamed_project / name
+            load(str(path))
+            tree = etree.parse(str(path))
+            declaration = path.read_bytes().splitlines()[0]
+            if name in {"main.tc", "lifecycle.ts"}:
+                expected_standalone = b"yes" if name == "main.tc" else b"no"
+                ok = b"standalone='" + expected_standalone + b"'" in declaration and ok
+            else:
+                ok = b"standalone=" not in declaration and ok
+            ok = (tree.find("extension").get("custom") == "keep"
+                  and tree.find("extension").text == "opaque <data>"
+                  and bool(tree.xpath('//comment()[.="retain"]')) and ok)
+            for element in tree.iter("param"):
+                expected = {
+                    "locator": "map::new_map::submit", "image": "picture::resources/button.png",
+                    "appFile": expected_app, "datapool_source_path": "resources/rows.csv",
+                }[element.get("id")]
+                ok = element.text == expected and ok
+            for element in tree.iter("stepset"):
+                expected_pool = {
+                    "rows": "DATATABLE(resources/rows.csv,true)",
+                    "spaced": " datatable ( resources/rows.csv , true ) ",
+                    "simple": "DATATABLE(resources/rows.csv)",
+                }[element.get("name")]
+                ok = element.get("datapool") == expected_pool and ok
+        case = loader.load_testcase(str(renamed_project / "main.tc"))
+        plan = loader.load_testplan(str(renamed_project / "nightly.tp"))
+        ok = (ok and case.datapool == "DATATABLE(resources/rows.csv,false)"
+              and case.case.steps[-1].relative_path == "resources/child.tc"
+              and plan.members == ["resources/child.tc", "resources/child.tc"]
+              and plan.dataconfig == "resources/DataConfig.properties"
+              and (renamed_project / "untouched.tc").read_bytes() == untouched_bytes)
+        win.close()
+    print("旧 XML 引用迁移并保留格式/扩展字段:", "✅" if ok else "❌")
+    return ok
+
+
+def test_rename_rebases_picture_and_datapool_references() -> bool:
+    """重命名图片/数据目录后，picture:: 与 DATATABLE 路径同步。"""
+    try:
+        from autopilot.model.testcase import ParamValue, Step, StepSet
+        with tempfile.TemporaryDirectory() as proj:
+            win = _win(proj)
+            case_path = win.create_resource("case", proj, "login")
+            tc = serializer.load(case_path)
+            tc.case.steps = [
+                Step(keyword_id="mobile_element_click", params=[
+                    ParamValue("locator", "picture::data/old/btn.png"),
+                    ParamValue("appFile", "apps/old/app.apk"),
+                    ParamValue("datapool_source_path", "data/old/data.csv"),
+                ]),
+                StepSet(datapool="DATATABLE(data/old/data.csv,true)"),
+                StepSet(datapool=" datatable ( data/old/data.csv , true ) "),
+                StepSet(datapool="DATATABLE(data/old/data.csv)"),
+            ]
+            serializer.save_testcase(tc, case_path)
+            old_dir = os.path.join(proj, "data")
+            new_dir = os.path.join(proj, "new_data")
+            os.makedirs(os.path.join(old_dir, "old"))
+            os.rename(old_dir, new_dir)
+            win._rebase_file_references(old_dir, new_dir)
+            updated = serializer.load(case_path)
+            by_id = {p.param_id: p.value for p in updated.case.steps[0].params}
+            ok = (
+                by_id["locator"] == "picture::new_data/old/btn.png"
+                and by_id["appFile"] == "apps/old/app.apk"
+                and by_id["datapool_source_path"] == "new_data/old/data.csv"
+                and updated.case.steps[1].datapool == "DATATABLE(new_data/old/data.csv,true)"
+                and updated.case.steps[2].datapool == " datatable ( new_data/old/data.csv , true ) "
+                and updated.case.steps[3].datapool == "DATATABLE(new_data/old/data.csv)"
+            )
+            win.close()
+        print("图片/数据池引用随目录重命名:", "✅" if ok else "❌")
+        return ok
+    except ImportError as e:
+        import traceback
+        traceback.print_exc()
+        print("图片/数据池引用随目录重命名: ⏭ 跳过(", e, ")")
+        return True
 
 
 def test_keyword_recent_group() -> bool:
@@ -795,7 +1419,7 @@ def test_keyword_recent_group() -> bool:
         count_ok = usage.get(b) == 3 and usage.get(a) == 1
         panel.deleteLater()
         ok = none_ok and has_group and order_ok and count_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("常用关键字分组: ⏭ 跳过(", e, ")")
         return True
@@ -831,7 +1455,7 @@ def test_multi_tab_editor() -> bool:
             closed = win._tab_bar.count() == 1 and len(win._open_docs) == 1
             win.close()
         ok = two_tabs and c2_edited and on_c1 and persist and no_dup and closed
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("多标签编辑器: ⏭ 跳过(", e, ")")
         return True
@@ -862,7 +1486,7 @@ def test_map_editor_platform_slot() -> bool:
         common_ok = el.locator.value == "//x"
         ed.close()
         ok = add_ok and removed_ok and common_ok
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback; traceback.print_exc()
         print("对象库编辑器分平台: ⏭ 跳过(", e, ")")
         return True
@@ -895,7 +1519,7 @@ def test_idle_center_welcome_vs_workspace() -> bool:
                 )
                 win.close()
         ok = no_proj and with_proj and opened and after_close and after_close_proj
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("欢迎页/空编辑区切换: ⏭ 跳过(", e, ")")
@@ -910,11 +1534,21 @@ def main() -> int:
               test_keyword_resource_and_project_guard(), test_explorer_panel(),
               test_tree_filter(), test_tree_resource_visibility(), test_run_checked(),
               test_rename_delete_dialog_display(), test_delete_closes_open_tab(),
-              test_rename_and_switch_project_sync(), test_recent_projects_prune(),
+              test_rename_and_switch_project_sync(), test_rename_project_root_sync(),
+              test_rename_rebases_checked_case_paths(), test_delete_project_clears_project_state(),
+              test_rename_failure_is_handled(), test_case_only_rename(),
+              test_rename_rejects_foreign_path_separator(),
+              test_create_rejects_path_escape_name(), test_recent_projects_prune(),
               test_recent_projects_slash_dedupe(),
               test_keyword_usage_decay(), test_inspector_crop_save(),
               test_platform_marker_and_guard(), test_map_editor_platform_slot(),
               test_keyword_recent_group(), test_new_project_dialog(),
+              test_save_as_supports_all_editors_and_keeps_suffix(),
+              test_rename_rebases_testplan_members(),
+              test_rename_rebases_map_references(),
+              test_rename_rebases_inner_case_references(),
+              test_rename_preserves_legacy_xml_references(),
+              test_rename_rebases_picture_and_datapool_references(),
               test_case_shell_move(), test_multi_tab_editor(),
               test_idle_center_welcome_vs_workspace()])
     print("\n总结:", "✅ 文件/工程操作全绿" if ok else "❌ 存在失败")

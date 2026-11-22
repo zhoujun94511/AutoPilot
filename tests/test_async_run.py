@@ -90,7 +90,7 @@ def test_gui_async() -> bool:
     """离屏 GUI 全链路在部分环境会阻塞 insert_step；降级为动作注册校验。"""
     try:
         from autopilot.ui.actions import ACTIONS_BY_ID
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("GUI 运行控制: ⏭ 跳过(", e, ")")
         return True
     spec = ACTIONS_BY_ID.get("run.pause")

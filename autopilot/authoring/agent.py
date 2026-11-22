@@ -682,7 +682,7 @@ def run_session_authoring(
     trace = AuthoringTrace(
         title=title,
         platform=platform,
-        natural_language=nl,
+        natural_language=prompt_nl,
     )
 
     def _progress(msg: str) -> None:
@@ -1174,6 +1174,7 @@ def run_session_authoring(
                 goal_completed = False
                 turn_failed = True
                 break
+            masked_step_dict = step.to_dict()
             if secret_map:
                 step.params = restore_step_params(step.params, secret_map)
             try:
@@ -1181,10 +1182,10 @@ def run_session_authoring(
             except AuthoringError as exc:
                 turn_failed = True
                 consecutive_failures += 1
-                reason = str(exc)
+                reason = mask_text(str(exc), secret_map) if secret_map else str(exc)
                 warnings.append(f"步骤失败已跳过：{step.keyword_id} → {reason}")
                 execution_fail_row: dict[str, Any] = {
-                    **step.to_dict(),
+                    **masked_step_dict,
                     "action_role": role,
                     "failed": True,
                     "error": reason[:200],
@@ -1198,7 +1199,7 @@ def run_session_authoring(
                 break
             consecutive_failures = 0
             step_row: dict[str, Any] = {
-                **step.to_dict(),
+                **masked_step_dict,
                 "action_role": role,
             }
             if nav_ledger is not None and role in {

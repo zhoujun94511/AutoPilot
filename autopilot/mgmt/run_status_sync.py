@@ -62,6 +62,8 @@ def collect_status_targets(
     root = project_dir or _project_dir_from_suite(suite)
 
     for rr in getattr(suite, "results", None) or []:
+        if getattr(rr, "is_cancelled", getattr(rr, "cancelled", False)):
+            continue
         path = str(getattr(rr, "source_path", "") or "")
         cid = logical_case_id_from_path(path)
         if not cid:
@@ -176,7 +178,9 @@ def try_sync_run_statuses_with_session(
                 log("跳过状态回写（未选择管理台项目空间）")
             return empty
         has_user = bool(
-            settings.mc_jwt() or (settings.mc_username() and settings.mc_password())
+            settings.mc_jwt()
+            or settings.mc_refresh()
+            or (settings.mc_username() and settings.mc_password())
         )
         if not has_user:
             if log:

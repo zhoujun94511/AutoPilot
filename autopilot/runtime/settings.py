@@ -1,19 +1,50 @@
 """轻量应用设置持久化（用户级 JSON）。
 
-记住「上次打开的工程 / 最近工程列表」等跨会话状态。读写失败（无权限/只读盘）
-一律静默降级，绝不影响启动。可用环境变量 AUTOPILOT_CONFIG_DIR 重定向（测试用）。
+记住「上次打开的工程 / 最近工程列表」等跨会话状态。
+可用环境变量 AUTOPILOT_CONFIG_DIR 重定向（测试用）。
 """
 
 from __future__ import annotations
 
 import base64
+from functools import wraps
 import json
+import logging
 import os
 import sys
+import tempfile
+import threading
 import time
 from typing import Any
 
+from .file_lock import exclusive_file_lock
+
 _MAX_RECENT = 10
+_settings_lock = threading.RLock()
+_file_lock_held = False  # Accessed only while holding _settings_lock.
+_log = logging.getLogger(__name__)
+
+
+def _serialized_update(update):
+    @wraps(update)
+    def synchronized(*args, **kwargs):
+        global _file_lock_held
+        with _settings_lock:
+            if _file_lock_held:
+                return update(*args, **kwargs)
+            try:
+                path = _path()
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with exclusive_file_lock(path + ".lock", timeout=3.0):
+                    _file_lock_held = True
+                    try:
+                        return update(*args, **kwargs)
+                    finally:
+                        _file_lock_held = False
+            except OSError as exc:
+                _log.warning("用户设置更新失败（%s）", type(exc).__name__)
+                return False
+    return synchronized
 
 
 def _norm(path: str) -> str:
@@ -30,42 +61,79 @@ def _path() -> str:
     return os.path.join(config_dir(), "settings.json")
 
 
-def load() -> dict:
-    # noinspection PyBroadException
+def _load(path: str) -> dict:
     try:
-        with open(_path(), encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
+    except FileNotFoundError:
         return {}
+    if not isinstance(data, dict):
+        raise ValueError("settings.json 必须为 JSON 对象")
+    return data
 
 
-def save(data: dict) -> None:
-    # noinspection PyBroadException
+def load() -> dict:
+    with _settings_lock:
+        try:
+            return _load(_path())
+        except (OSError, ValueError):
+            return {}
+
+
+@_serialized_update
+def save(data: dict) -> bool:
+    staged = ""
     try:
-        os.makedirs(config_dir(), exist_ok=True)
         path = _path()
-        with open(path, "w", encoding="utf-8") as f:
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        _load(path)  # 保留读取出错的旧设置，等待恢复后再更新。
+        _harden_path_permissions(directory, is_dir=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=".settings-", suffix=".json",
+            dir=directory, delete=False,
+        ) as f:
+            staged = f.name
             json.dump(data, f, ensure_ascii=False, indent=2)
-        _harden_path_permissions(config_dir(), is_dir=True)
-        _harden_path_permissions(path, is_dir=False)
-    except Exception:
-        pass
+            f.flush()
+            os.fsync(f.fileno())
+        _harden_path_permissions(staged, is_dir=False)
+        os.replace(staged, path)
+        staged = ""
+        return True
+    except (OSError, TypeError, ValueError) as exc:
+        _log.warning("用户设置保存失败（%s）", type(exc).__name__)
+        return False
+    finally:
+        if staged:
+            try:
+                os.unlink(staged)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                _log.warning("用户设置临时文件清理失败")
 
 
 def get(key: str, default: Any = None) -> Any:
     return load().get(key, default)
 
 
-def set_value(key: str, value: Any) -> None:
+@_serialized_update
+def set_value(key: str, value: Any) -> bool:
     data = load()
     data[key] = value
-    save(data)
+    return save(data)
 
 
 def recent_projects() -> list:
     """最近工程列表；剔除失效目录，并按规范化路径去重（/ 与 \\ 混用合并）。"""
-    data = load()
+    raw, alive = _clean_recent_projects(load())
+    if alive != raw:
+        _prune_recent_projects()
+    return alive
+
+
+def _clean_recent_projects(data: dict) -> tuple[list[str], list[str]]:
     raw = [p for p in data.get("recent_projects", []) if isinstance(p, str) and p.strip()]
     alive: list[str] = []
     seen: set[str] = set()
@@ -77,18 +145,26 @@ def recent_projects() -> list:
             continue
         seen.add(key)
         alive.append(os.path.normpath(p))
+    return raw, alive
+
+
+@_serialized_update
+def _prune_recent_projects() -> bool:
+    data = load()
+    raw, alive = _clean_recent_projects(data)
     if alive != raw:
         data["recent_projects"] = alive
         if data.get("last_project"):
             data["last_project"] = os.path.normpath(str(data["last_project"]))
-        save(data)
-    return alive
+        return save(data)
+    return True
 
 
-def remember_project(path: str) -> None:
+@_serialized_update
+def remember_project(path: str) -> bool:
     """把 path 记为上次工程，并置顶到最近列表（规范化去重、限长）。"""
     if not path:
-        return
+        return True
     path = os.path.normpath(path)
     key = _norm(path)
     data = load()
@@ -99,7 +175,7 @@ def remember_project(path: str) -> None:
     ]
     recents.insert(0, path)
     data["recent_projects"] = recents[:_MAX_RECENT]
-    save(data)
+    return save(data)
 
 
 def last_project() -> str:
@@ -109,11 +185,9 @@ def last_project() -> str:
     return os.path.normpath(p)
 
 
-def forget_last_project() -> None:
+def forget_last_project() -> bool:
     """关闭工程：忘掉上次工程，最近列表保留。下次启动回到无工程欢迎页。"""
-    data = load()
-    data["last_project"] = ""
-    save(data)
+    return set_value("last_project", "")
 
 
 # 「常用关键字」热度：带时间衰减的累计分。半衰期内高频用的排前，长期不用自然沉底；
@@ -158,11 +232,12 @@ def keyword_usage_ranked(limit: int = 0, now: float = 0.0) -> list:
     return ranked[:limit] if limit else ranked
 
 
-def bump_keyword_usage(keyword_id: str, now: float = 0.0) -> None:
+@_serialized_update
+def bump_keyword_usage(keyword_id: str, now: float = 0.0) -> bool:
     """关键字被插入用例时热度 +1（在衰减后的历史热度上累加，兼顾频次与时效）。
     超过上限则按当前热度保留 top N。静默降级，绝不影响插入。"""
     if not keyword_id:
-        return
+        return True
     now = now or time.time()
     data = load()
     m = _norm_usage(data.get("keyword_usage", {}))
@@ -172,7 +247,7 @@ def bump_keyword_usage(keyword_id: str, now: float = 0.0) -> None:
         keep = sorted(m, key=lambda k: _decayed(m[k][0], m[k][1], now), reverse=True)[:_USAGE_CAP]
         m = {k: m[k] for k in keep}
     data["keyword_usage"] = {k: {"count": round(cc, 4), "ts": tt} for k, (cc, tt) in m.items()}
-    save(data)
+    return save(data)
 
 
 def mobile_unicode_keyboard() -> bool:
@@ -469,14 +544,33 @@ def project_platform(path: str) -> str:
     return m.get(_norm(path), "") if isinstance(m, dict) else ""
 
 
-def set_project_platform(path: str, plat: str) -> None:
+@_serialized_update
+def set_project_platform(path: str, plat: str) -> bool:
     data = load()
     m = data.get("project_platform", {})
     if not isinstance(m, dict):
         m = {}
     m[_norm(path)] = plat
     data["project_platform"] = m
-    save(data)
+    return save(data)
+
+
+@_serialized_update
+def rename_project_platform(old_path: str, new_path: str) -> bool:
+    """Move a project's default platform key after its directory is renamed."""
+    old_key, new_key = _norm(old_path), _norm(new_path)
+    if not old_key or not new_key or old_key == new_key:
+        return True
+    data = load()
+    mapping = data.get("project_platform", {})
+    if not isinstance(mapping, dict):
+        return True
+    if old_key in mapping:
+        mapping[new_key] = mapping.pop(old_key)
+    else:
+        mapping.pop(new_key, None)
+    data["project_platform"] = mapping
+    return save(data)
 
 
 def _b64_decode(key: str) -> bytes:
@@ -490,13 +584,14 @@ def _b64_decode(key: str) -> bytes:
         return b""
 
 
-def _b64_encode(key: str, data: bytes) -> None:
+@_serialized_update
+def _b64_encode(key: str, data: bytes) -> bool:
     cfg = load()
     if data:
         cfg[key] = base64.b64encode(data).decode("ascii")
     else:
         cfg.pop(key, None)
-    save(cfg)
+    return save(cfg)
 
 
 def window_layout_state() -> bytes:
@@ -531,12 +626,12 @@ def mc_server_url() -> str:
     return platform_base_url(include_settings=True)
 
 
-def set_mc_server_url(url: str) -> None:
+def set_mc_server_url(url: str) -> bool:
     from .platform_deploy import platform_url_locked
 
     if platform_url_locked():
-        return
-    set_value("mc_server_url", str(url or "").strip().rstrip("/"))
+        return True
+    return set_value("mc_server_url", str(url or "").strip().rstrip("/"))
 
 
 def mc_web_url() -> str:
@@ -572,8 +667,8 @@ def mc_username() -> str:
     return str(load().get("mc_username", "") or "").strip()
 
 
-def set_mc_username(username: str) -> None:
-    set_value("mc_username", str(username or "").strip())
+def set_mc_username(username: str) -> bool:
+    return set_value("mc_username", str(username or "").strip())
 
 
 def _harden_path_permissions(path: str, *, is_dir: bool) -> None:
@@ -829,6 +924,14 @@ def _secret_keyring_store(kind: str, value: str) -> bool:
         return False
 
 
+@_serialized_update
+def _migrate_legacy_secret(data: dict, keys: tuple[str, ...], writer, plain: str) -> bool:
+    current = load()
+    if any(current.get(key) != data.get(key) for key in keys):
+        return False
+    return writer(plain)
+
+
 def _read_secret(*, kind: str, enc_key: str, plain_key: str, writer) -> str:
     from_kr = _secret_keyring_get(kind)
     if from_kr:
@@ -840,21 +943,22 @@ def _read_secret(*, kind: str, enc_key: str, plain_key: str, writer) -> str:
         # 旧 Fernet 密文在可升级时迁到钥匙串 / DPAPI
         if plain and enc.startswith("v1:"):
             try:
-                writer(plain)
+                _migrate_legacy_secret(data, (enc_key, plain_key), writer, plain)
             except (OSError, RuntimeError, ValueError, TypeError):
                 pass
         return plain
     plain = str(data.get(plain_key, "") or "").strip()
     if plain:
         try:
-            writer(plain)
+            _migrate_legacy_secret(data, (enc_key, plain_key), writer, plain)
         except (OSError, RuntimeError, ValueError, TypeError):
             return plain
         return plain
     return ""
 
 
-def _write_secret(*, kind: str, value: str, enc_key: str, plain_key: str) -> None:
+@_serialized_update
+def _write_secret(*, kind: str, value: str, enc_key: str, plain_key: str) -> bool:
     stored = _secret_keyring_store(kind, value)
     data = load()
     data.pop(plain_key, None)
@@ -864,36 +968,38 @@ def _write_secret(*, kind: str, value: str, enc_key: str, plain_key: str) -> Non
         data[enc_key] = _encrypt_mc_password(value)
     else:
         data.pop(enc_key, None)
-    save(data)
+    return save(data)
 
 
 def mc_password() -> str:
     """读取管理台密码：优先 OS 钥匙串，其次 ``mc_password_enc``，再迁移旧明文。"""
-    user = mc_username() or "default"
+    data = load()
+    user = str(data.get("mc_username", "") or "").strip() or "default"
     from_keyring = _mc_keyring_get(user)
     if from_keyring:
         return from_keyring
-    data = load()
+    keys = ("mc_username", "mc_password_enc", "mc_password")
     enc = str(data.get("mc_password_enc", "") or "").strip()
     if enc:
         plain = _decrypt_mc_password(enc)
         if plain and enc.startswith("v1:"):
             try:
-                set_mc_password(plain)
+                _migrate_legacy_secret(data, keys, set_mc_password, plain)
             except (OSError, RuntimeError, ValueError, TypeError):
                 pass
         return plain
     plain = str(data.get("mc_password", "") or "")
     if plain:
         try:
-            set_mc_password(plain)
+            _migrate_legacy_secret(data, keys, set_mc_password, plain)
         except (OSError, RuntimeError, ValueError, TypeError):
             return plain
         return plain
     return ""
 
 
-def set_mc_password(password: str) -> None:
+@_serialized_update
+def set_mc_password(password: str) -> bool:
     """优先写入 OS 钥匙串；否则 DPAPI/Fernet 密文。始终清除 settings.json 中的明文。"""
     pwd = str(password or "")
     user = mc_username() or "default"
@@ -908,7 +1014,7 @@ def set_mc_password(password: str) -> None:
         data["mc_password_enc"] = _encrypt_mc_password(pwd)
     else:
         data.pop("mc_password_enc", None)
-    save(data)
+    return save(data)
 
 
 def mc_jwt() -> str:
@@ -921,9 +1027,9 @@ def mc_jwt() -> str:
     )
 
 
-def set_mc_jwt(token: str) -> None:
+def set_mc_jwt(token: str) -> bool:
     """优先 OS 钥匙串；否则 DPAPI/Fernet 密文落盘，清除明文键。"""
-    _write_secret(
+    return _write_secret(
         kind="jwt",
         value=str(token or "").strip(),
         enc_key="mc_jwt_enc",
@@ -941,9 +1047,9 @@ def mc_refresh() -> str:
     )
 
 
-def set_mc_refresh(token: str) -> None:
+def set_mc_refresh(token: str) -> bool:
     """优先 OS 钥匙串；否则 DPAPI/Fernet 密文落盘，清除明文键。"""
-    _write_secret(
+    return _write_secret(
         kind="refresh",
         value=str(token or "").strip(),
         enc_key="mc_refresh_enc",
@@ -959,12 +1065,15 @@ def mc_user_role() -> str:
     return str(load().get("mc_user_role", "") or "").strip()
 
 
-def set_mc_user_profile(*, user_id: str = "", username: str = "", role: str = "") -> None:
+@_serialized_update
+def set_mc_user_profile(*, user_id: str = "", username: str = "", role: str = "") -> bool:
     """缓存最近一次登录的用户档案（与 Web JWT 用户对齐）。"""
+    data = load()
     if username:
-        set_mc_username(username)
-    set_value("mc_user_id", str(user_id or "").strip())
-    set_value("mc_user_role", str(role or "").strip())
+        data["mc_username"] = str(username).strip()
+    data["mc_user_id"] = str(user_id or "").strip()
+    data["mc_user_role"] = str(role or "").strip()
+    return save(data)
 
 
 def clear_mc_session() -> None:
@@ -1005,11 +1114,12 @@ def mc_bound_project_id(project_dir: str) -> str:
     return str(raw.get(key) or "").strip()
 
 
-def set_mc_bound_project_id(project_dir: str, project_id: str) -> None:
+@_serialized_update
+def set_mc_bound_project_id(project_dir: str, project_id: str) -> bool:
     """记住本地工程 → Platform 项目；空 project_id 表示删除映射。"""
     key = _norm(os.path.abspath(project_dir or ""))
     if not key:
-        return
+        return True
     data = load()
     raw = data.get("mc_project_bindings", {})
     bindings = dict(raw) if isinstance(raw, dict) else {}
@@ -1019,7 +1129,27 @@ def set_mc_bound_project_id(project_dir: str, project_id: str) -> None:
     else:
         bindings.pop(key, None)
     data["mc_project_bindings"] = bindings
-    save(data)
+    return save(data)
+
+
+@_serialized_update
+def rename_mc_bound_project(old_path: str, new_path: str) -> bool:
+    """Move a local-project → Platform binding after the project root is renamed."""
+    old_key = _norm(os.path.abspath(old_path or ""))
+    new_key = _norm(os.path.abspath(new_path or ""))
+    if not old_key or not new_key or old_key == new_key:
+        return True
+    data = load()
+    raw = data.get("mc_project_bindings", {})
+    if not isinstance(raw, dict):
+        return True
+    bindings = dict(raw)
+    if old_key in bindings:
+        bindings[new_key] = bindings.pop(old_key)
+    else:
+        bindings.pop(new_key, None)
+    data["mc_project_bindings"] = bindings
+    return save(data)
 
 
 def mc_save_sync_prompt() -> bool:

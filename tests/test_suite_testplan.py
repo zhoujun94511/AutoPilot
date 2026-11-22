@@ -37,12 +37,15 @@ def test_suite_editor() -> bool:
             p = win.create_resource("suite", tmp, "s1")
             win._on_file_activated(p)                 # 打开套件编辑器
             opened = win.center.currentWidget() is win.suite_editor
+            win.suite_editor.set_default_platform("ios")
             win.suite_editor.insert_step("log", None)  # 无选中 → 进 before
+            platform_ok = win.suite_editor._case_platform() == "ios"
             win._save_suite()
             ts = serializer.load(p)
-            ok = opened and len(ts.before.steps) == 1 and ts.before.steps[0].keyword_id == "log"
+            ok = (opened and platform_ok and win.suite_editor.rowCount() == 1
+                  and len(ts.before.steps) == 1 and ts.before.steps[0].keyword_id == "log")
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("套件编辑器: ⏭ 跳过(", e, ")")
         return True
     print("套件编辑器 插入→保存→重载:", "✅" if ok else "❌")
@@ -65,7 +68,7 @@ def test_testplan_editor() -> bool:
             ok = (opened and tp.dataconfig == "DataConfig.properties"
                   and tp.fault_times == 2 and "cases/login.tc.yaml" in tp.members)
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("测试计划编辑器: ⏭ 跳过(", e, ")")
         return True
     print("测试计划 编辑→保存→重载:", "✅" if ok else "❌")

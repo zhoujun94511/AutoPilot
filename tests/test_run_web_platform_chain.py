@@ -134,8 +134,10 @@ def test_run_base_vars_default_web_sets_default_platform(tmp_path, monkeypatch):
 
 
 def test_on_suite_done_report_meta_includes_web():
+    from datetime import datetime
     from tests._qt import get_qt_app
     from autopilot.ui.main_window import MainWindow
+    from autopilot.ui.main_window.run import _RunReportContext
 
     get_qt_app()
     captured: dict = {}
@@ -146,15 +148,9 @@ def test_on_suite_done_report_meta_includes_web():
 
     with tempfile.TemporaryDirectory() as tmp:
         win = MainWindow(project_dir=tmp, config_dir="")
-        win._report_on_finish = True
-        win._run_started_at = None
-        win._run_case_paths = []
-        win._fault_strategy = type("F", (), {"value": "continue"})()
-
-        class _W:
-            _base_vars = {"__default_platform__": "web"}
-
-        win._worker = _W()
+        win._run_report_context = _RunReportContext(
+            tmp, ("", "", "", ""), datetime.now(), "continue", (), {"__default_platform__": "web"},
+        )
         with patch("autopilot.report.write_report", _fake_write), patch(
             "autopilot.report.write_result_json", lambda *_a, **_k: None
         ), patch(

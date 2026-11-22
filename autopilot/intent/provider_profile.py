@@ -84,10 +84,12 @@ def normalize_verbosity(raw: str | None, *, default: str = "none") -> Verbosity:
 
 def detect_provider(provider: str | None, model: str | None = None, base_url: str | None = None) -> str:
     pid = (provider or "").strip().lower()
-    if pid in ("openai", "deepseek", "qwen", "gemini", "ollama"):
+    if pid in ("openai", "anthropic", "deepseek", "qwen", "gemini", "ollama"):
         return pid
     mid = (model or "").strip().lower()
     url = (base_url or "").strip().lower()
+    if "anthropic" in url or mid.startswith("claude-"):
+        return "anthropic"
     if "deepseek" in url or mid.startswith("deepseek"):
         return "deepseek"
     if "dashscope" in url or mid.startswith("qwen"):
@@ -242,7 +244,7 @@ def uses_max_completion_tokens(model: str) -> bool:
     m = (model or "").strip().lower()
     if not m:
         return False
-    if "gpt-5" in m:
+    if "gpt-5" in m or m.startswith(("o1", "o3", "o4")):
         return True
     if m.startswith(("o1", "o3", "o4")):
         return True
@@ -277,7 +279,7 @@ def should_omit_temperature(
     p = detect_provider(provider, model)
     if thinking_enabled and p == "deepseek":
         return True
-    if "gpt-5" in m:
+    if "gpt-5" in m or m.startswith(("o1", "o3", "o4")):
         return True
     if p == "gemini" and ("gemini-3" in m or "gemini-2.5" in m):
         return True

@@ -134,7 +134,7 @@ def test_fail_shots_keep_pre_and_post_separate():
     ex = Executor(ExecutionContext())
     names: list[str] = []
 
-    def fake_cap(_result, *, _step=None, _intent_id="", filename="screenshot.png"):
+    def fake_cap(_result, *, step=None, intent_id="", filename="screenshot.png"):
         names.append(filename)
         if "before" in filename:
             return "PRE", "reports/pre.png", ""

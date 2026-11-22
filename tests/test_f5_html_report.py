@@ -9,7 +9,7 @@ RUN_PY = Path(__file__).resolve().parents[1] / "autopilot" / "ui" / "main_window
 
 
 def _method_block(text: str, name: str) -> str:
-    m = re.search(rf"def {name}\(self\)[\s\S]*?(?=\n def |\Z)", text)
+    m = re.search(rf"^    def {name}\(self\)[\s\S]*?(?=^    def |\Z)", text, re.MULTILINE)
     assert m, f"{name} 未找到"
     return m.group(0)
 

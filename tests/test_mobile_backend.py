@@ -808,6 +808,9 @@ def test_run_cases_device_by_case_platform() -> bool:
     # noinspection PyMethodMayBeStatic,PyUnusedLocal
     class _Mgr:
         server = "http://127.0.0.1:4723"
+        backend_mode = "auto"
+        platform = ""
+        extra_caps: dict = {}
 
         def start_server(self):
             pass
@@ -836,6 +839,7 @@ def test_run_cases_device_by_case_platform() -> bool:
         })
         ok = calls == [("Android", "AND-1"), ("iOS", "IOS-1")] \
             and suite.case_counts()["failed"] == 0
+        assert ok, f"设备路由或执行结果异常：调用={calls} 用例统计={suite.case_counts()}"
     finally:
         sess.get_manager = orig
     print("run_cases platform UDID:", "OK" if ok else "FAIL", calls)

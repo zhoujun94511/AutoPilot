@@ -525,16 +525,18 @@ def test_f5_disables_parallel_dialog() -> bool:
             seen["resolve"] = True
             return "sequential", "", 0, None, True
 
-        def _spy_start(_cases, _name, _maps, _report=False, _keyword_store=None, *,
-                       allow_parallel=True, _unattended=False, _fault_times=0):
+        def _spy_start(_cases, _name, _maps, report=False, keyword_store=None, *,
+                       allow_parallel=True, unattended=False, fault_times=0):
             seen["allow_parallel"] = allow_parallel
+            seen["report"] = report
             return True
 
         win._resolve_parallel_run = _spy_resolve  # type: ignore[method-assign]
         win._platform_guard = lambda cases, **kw: True  # type: ignore[method-assign]
         win._start_worker = _spy_start  # type: ignore[method-assign]
         win.run_current_case()
-        ok = seen["allow_parallel"] is False and seen["resolve"] is False
+        ok = (seen["allow_parallel"] is False and seen["resolve"] is False
+              and seen["report"] is True)
         win.close()
     print("F5 禁并行弹窗:", "✅" if ok else "❌", seen)
     return ok
@@ -559,26 +561,24 @@ def test_parallel_skips_device_pick() -> bool:
 
 def test_report_meta_parallel_devices() -> bool:
     """_on_suite_done 报告 meta 含全部并行 UDID。"""
+    from datetime import datetime
     import tempfile
     from autopilot.ui.main_window import MainWindow
+    from autopilot.ui.main_window.run import _RunReportContext
     _app()
     with tempfile.TemporaryDirectory() as tmp:
         win = MainWindow(project_dir=tmp, config_dir="")
         win.create_resource("case", tmp, "c1")
-        win._report_on_finish = True
-        win._run_started_at = None
-        win._run_case_paths = []
-        win._fault_strategy = type("F", (), {"value": "continue"})()
-        # 伪造 worker base_vars
-        class _W:
-            _base_vars = {
+        win._run_report_context = _RunReportContext(
+            tmp, ("", "", "", ""), datetime.now(), "continue", (), {
                 "__parallel_device_udids__": ["U1", "U2"],
                 "__parallel_platform__": "android",
-            }
-        win._worker = _W()
+            },
+        )
+        win.project_dir = ""  # 执行完成前关闭工程，报告仍属于启动时的工程。
         captured = {}
 
-        def _fake_write(_suite, out, _generated_at="", meta=None):
+        def _fake_write(_suite, out, generated_at="", meta=None):
             captured["meta"] = meta
             return out
 
@@ -587,7 +587,7 @@ def test_report_meta_parallel_devices() -> bool:
             win._on_suite_done(SuiteResult(name="R", results=[_pass_result("c")]))
         report_meta = captured.get("meta")
         devices = getattr(report_meta, "devices", {}) if report_meta else {}
-        ok = "U1" in devices.values() and "U2" in devices.values()
+        ok = "U1" in devices.values() and "U2" in devices.values() and report_meta.project_dir == tmp
         win.close()
     print("报告 meta 并行设备:", "✅" if ok else "❌", devices)
     return ok
@@ -605,6 +605,8 @@ def test_menu_suite_wired() -> bool:
 
 def test_ios_per_slot_caps_no_cross_talk() -> bool:
     """并行 iOS：各 shard 的 webDriverAgentUrl/udid 与 slot 一致，无首台污染。"""
+    from autopilot.runtime.device_runtime import DeviceRuntimeRegistry
+
     seen: dict[str, dict] = {}
 
     def fake_run_cases(_testcases, name="Suite", **_kwargs):
@@ -616,7 +618,8 @@ def test_ios_per_slot_caps_no_cross_talk() -> bool:
             results=[_pass_result(tc.name, udid) for tc in _testcases],
         )
 
-    with patch("autopilot.engine.run.parallel.run_cases", fake_run_cases), \
+    with patch("autopilot.runtime.device_runtime._REGISTRY", DeviceRuntimeRegistry()), \
+            patch("autopilot.engine.run.parallel.run_cases", fake_run_cases), \
             patch("autopilot.runtime.device_session.DeviceSession._ios_appium_caps",
                   lambda self: {
                       "appium:udid": self.udid,

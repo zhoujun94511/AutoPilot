@@ -146,6 +146,11 @@ def _plan_only(
         max_steps=max_steps,
         fallback_title=request.title or request.natural_language[:40],
     )
+    if secret_map:
+        from .secrets import restore_step_params
+
+        for s in draft.steps:
+            s.params = restore_step_params(s.params, secret_map)
     draft.mode = "plan_only"
     draft.raw_llm = str(data)
     return draft, capture_meta

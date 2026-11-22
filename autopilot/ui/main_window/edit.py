@@ -108,7 +108,7 @@ class EditMixin(_Base):
                 cols = []
             case_plat = self._effective_case_platform() if hasattr(self, "_effective_case_platform") else ""
             if not case_plat and editor is not None and getattr(editor, "case", None) is not None:
-                case_plat = editor.case.platform or ""
+                case_plat = getattr(editor.case, "platform", "") or ""
             self.param_form.show_step(node, meta, cols, case_platform=case_plat)
         elif isinstance(node, StepVerbs):
             editor = self._current_case_editor()

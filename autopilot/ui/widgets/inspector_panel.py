@@ -434,6 +434,7 @@ class InspectorPanel(QWidget):
         # noinspection PyUnresolvedReferences
         self._snap_worker.done.connect(self._on_snapshot)
         self._snap_worker.start()
+        self.sync_cancel_btn()
 
     @property
     def cancel_event(self) -> threading.Event:

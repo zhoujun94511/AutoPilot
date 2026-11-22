@@ -48,12 +48,12 @@ def _add_job_args(ap: argparse.ArgumentParser) -> None:
     auth = ap.add_mutually_exclusive_group()
     auth.add_argument(
         "--token",
-        default=os.environ.get("MC_API_TOKEN", ""),
+        default=None,
         help="运维 X-API-Token（默认 MC_API_TOKEN）",
     )
     auth.add_argument(
         "--jwt",
-        default=os.environ.get("MC_JWT", ""),
+        default=None,
         help="用户 Bearer JWT（默认 MC_JWT；与 --token 二选一）",
     )
     ap.add_argument("--username", default=os.environ.get("MC_USERNAME", ""))
@@ -101,8 +101,15 @@ def _add_job_args(ap: argparse.ArgumentParser) -> None:
 
 
 def _client_from_args(args: argparse.Namespace) -> MgmtClient:
-    jwt = (args.jwt or "").strip()
-    token = (args.token or "").strip()
+    if args.token is not None:
+        token = str(args.token).strip()
+        jwt = ""
+    elif args.jwt is not None:
+        jwt = str(args.jwt).strip()
+        token = ""
+    else:
+        jwt = os.environ.get("MC_JWT", "").strip()
+        token = os.environ.get("MC_API_TOKEN", "").strip()
     user = (args.username or "").strip()
     password = args.password or ""
     if not jwt and user and password:

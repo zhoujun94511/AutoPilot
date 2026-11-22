@@ -14,6 +14,8 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO, Optional
 
+from ..runtime.file_lock import ensure_lockable_byte, lock_file, unlock_file
+
 
 class RunnerInstanceBusyError(RuntimeError):
     """同 runner_id 已有本机进程持有实例锁。"""
@@ -64,8 +66,8 @@ class RunnerInstanceLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fh = open(self.path, "a+b")
         try:
-            _ensure_lockable_byte(fh)
-            _lock_fd(fh)
+            ensure_lockable_byte(fh)
+            lock_file(fh)
         except OSError as exc:
             holder = _read_holder_meta(fh)
             try:
@@ -99,7 +101,7 @@ class RunnerInstanceLock:
         if fh is None:
             return
         try:
-            _unlock_fd(fh)
+            unlock_file(fh)
         except OSError:
             pass
         try:
@@ -124,40 +126,6 @@ def acquire_runner_instance_lock(
     lock = RunnerInstanceLock(runner_id, lock_dir=lock_dir)
     lock.acquire()
     return lock
-
-
-def _ensure_lockable_byte(fh: BinaryIO) -> None:
-    fh.seek(0, os.SEEK_END)
-    if fh.tell() == 0:
-        fh.write(b"\0")
-        fh.flush()
-    fh.seek(0)
-
-
-def _lock_fd(fh: BinaryIO) -> None:
-    fd = fh.fileno()
-    if os.name == "nt":
-        import msvcrt
-
-        fh.seek(0)
-        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-
-def _unlock_fd(fh: BinaryIO) -> None:
-    fd = fh.fileno()
-    if os.name == "nt":
-        import msvcrt
-
-        fh.seek(0)
-        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
-    else:
-        import fcntl
-
-        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def _write_holder_meta(fh: BinaryIO, meta: dict) -> None:

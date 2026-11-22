@@ -125,8 +125,10 @@ def test_cancel_refresh() -> bool:
         from autopilot.ui.widgets.inspector_panel import InspectorPanel
         p = InspectorPanel()
         release = threading.Event()
+        entered = threading.Event()
 
         def held_provider():
+            entered.set()
             release.wait(5)                       # 阻塞，模拟慢设备初始化
             return b"", _ANDROID, "android"
 
@@ -136,24 +138,35 @@ def test_cancel_refresh() -> bool:
 
         p.snapshot_provider = held_provider
         p.refresh()
-        running_ok = (p._snap_worker.isRunning()
-                      and not p.btn_refresh.isEnabled() and p.btn_cancel.isEnabled())
-        # 终止：立即反馈、按钮置「收尾中」状态，标记 cancelled
-        p.cancel_refresh()
-        cancel_ok = (p._snap_cancelled is True and not p.btn_cancel.isEnabled())
-        # 放行后台调用 → worker 结束 → done 投递：丢弃结果、不渲染、刷新恢复、发 cancelled（释放会话）
-        release.set()
-        deadline = time.monotonic() + 5
-        while p._snap_worker.isRunning() and time.monotonic() < deadline:
-            app.processEvents(); time.sleep(0.02)
-        p._snap_worker.wait(2000)
-        app.processEvents()
-        settled_ok = (p.tree.topLevelItemCount() == 0          # 结果被丢弃，没渲染
-                      and p.btn_refresh.isEnabled() and not p.btn_cancel.isEnabled()
-                      and p._snap_cancelled is False
-                      and released["n"] == 1)                  # 收尾后发了一次「释放会话」信号
-        ok = running_ok and cancel_ok and settled_ok
-    except Exception as e:  # noqa: BLE001
+        worker = p._snap_worker
+        joined = False
+        try:
+            assert entered.wait(2), "取快照线程未进入 provider"
+            assert worker.isRunning() and not p.btn_refresh.isEnabled(), "取快照未进入运行态"
+            assert p.btn_cancel.isEnabled(), "取快照进行中必须可以终止"
+            p.cancel_refresh()
+            assert p._snap_cancelled and p.cancel_event.is_set(), "终止未通知后台调用"
+            assert not p.btn_cancel.isEnabled(), "后台收尾中不应重复终止"
+            release.set()
+            joined = worker.wait(2000)
+            assert joined, "取快照线程未在放行后结束"
+            deadline = time.monotonic() + 2
+            while released["n"] == 0 and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(0.01)
+            assert p.tree.topLevelItemCount() == 0, "被终止的快照仍然渲染"
+            assert p.btn_refresh.isEnabled() and not p.btn_cancel.isEnabled(), "收尾后按钮状态异常"
+            assert p._snap_worker is None and not p._snap_cancelled, "收尾后残留运行态"
+            assert released["n"] == 1, f"释放会话信号应恰好一次，实际 {released['n']} 次"
+            ok = True
+        finally:
+            release.set()
+            if not joined:
+                worker.wait(2000)
+            p.close()
+            p.deleteLater()
+            app.processEvents()
+    except ImportError as e:
         import traceback
         traceback.print_exc()
         print("终止快照: ⏭ 跳过(", e, ")")

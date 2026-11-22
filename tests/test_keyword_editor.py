@@ -7,6 +7,7 @@
 import os
 import sys
 import tempfile
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")  # 必须在导入 PyQt 前设置
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -36,6 +37,7 @@ def test_serializer_roundtrip() -> bool:
           and len(kd2.params) == 2 and kd2.param("user").default == "admin"
           and len(kd2.steps) == 2 and isinstance(kd2.steps[0], Step)
           and kd2.steps[0].param("message") == "${user}")
+    assert ok, "自定义关键字序列化后内容不一致"
     print("KeywordDef 序列化 round-trip:", "✅" if ok else "❌")
     return ok
 
@@ -46,6 +48,7 @@ def test_discovery() -> bool:
                                 os.path.join(tmp, "greet.ks.yaml"))
         store = discover_keywords(tmp)
     ok = store.get("greet_verb") is not None
+    assert ok, "自定义关键字未被发现"
     print(".ks.yaml 被仓库发现:", "✅" if ok else "❌")
     return ok
 
@@ -54,11 +57,13 @@ def test_gui_flow() -> bool:
     try:
         from PyQt6.QtWidgets import QApplication
         from autopilot.ui.main_window import MainWindow
-    except Exception as e:  # noqa: BLE001  无 GUI 平台则跳过
+    except ImportError as e:  # 无 GUI 依赖时跳过；实际流程异常应当失败
         print("GUI 编辑器流程: ⏭ 跳过(", e, ")")
         return True
     _app = QApplication.instance() or QApplication([])
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, patch.dict(
+        os.environ, {"AUTOPILOT_CONFIG_DIR": os.path.join(tmp, "config")}
+    ), patch("autopilot.mobile.ios_bootstrap.reclaim_stale_local_ios_prep"):
         # 预置一个自定义关键字，验证库视图能挂载
         serializer.save_keyword(KeywordDef(ks_id="greet_verb"),
                                 os.path.join(tmp, "greet.ks.yaml"))
@@ -79,13 +84,18 @@ def test_gui_flow() -> bool:
                    and len(reloaded.steps) == 1)
 
         # 用例里插入自定义关键字调用(StepVerbs)
-        win.new_case()
+        # 显式验证平台选择，单独运行本文件也无需等待离屏弹窗。
+        with patch("PyQt6.QtWidgets.QInputDialog.getItem", return_value=("Web", True)) as choose:
+            win.new_case()
+            choose.assert_called_once()
+        assert win.case_editor.case.platform == "web", "草稿用例未采用所选平台"
         win.center.setCurrentWidget(win.case_editor)
         win._on_keyword_activated("ks::greet_verb")
         sv = [n for n in win.case_editor.case.case.steps if isinstance(n, StepVerbs)]
         insert_ok = len(sv) == 1 and sv[0].ks_id == "greet_verb"
         win.close()
     ok = has_custom and edit_ok and insert_ok
+    assert ok, f"库挂载={has_custom} 编辑保存={edit_ok} 插入调用={insert_ok}"
     print("GUI 编辑器流程:", "✅" if ok else "❌",
           f"(库挂载={has_custom} 编辑保存={edit_ok} 插入调用={insert_ok})")
     return ok

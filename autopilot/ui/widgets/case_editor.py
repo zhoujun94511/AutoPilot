@@ -266,7 +266,7 @@ class CaseEditor(QTableWidget):
     def _case_platform(self) -> str:
         if self._case is None:
             return self._default_platform
-        plat = (self._case.platform or "").strip().lower()
+        plat = (getattr(self._case, "platform", "") or "").strip().lower()
         if plat in ("android", "ios", "web"):
             return plat
         return self._default_platform

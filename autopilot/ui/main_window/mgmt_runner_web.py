@@ -108,22 +108,18 @@ class MgmtRunnerWebMixin(_Base):
             )
             return ""
         try:
-            from ...mgmt import ensure_user_session
+            from ...mgmt import MgmtClient
 
-            client, _ = ensure_user_session(require=True)
-            try:
-
-                client.register_runner(
+            # Operator 使用管理员预配的 Runner Token 直接登记，避免与 platform 来源冲突
+            with MgmtClient(settings.mc_server(), api_token=token) as runner_client:
+                runner_client.register_runner(
                     {
                         "runner_id": runner_id,
-                        "hostname": os.environ.get("COMPUTERNAME", ""),
+                        "hostname": os.environ.get("COMPUTERNAME") or os.uname().nodename if hasattr(os, "uname") else os.environ.get("COMPUTERNAME", ""),
                         "version": str(runtime_version),
                         "capabilities": [],
-                        "registration_source": "ide",
                     }
                 )
-            finally:
-                client.close()
         except Exception as exc:  # noqa: BLE001
 
             QMessageBox.warning(

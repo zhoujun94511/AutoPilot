@@ -163,8 +163,8 @@ function collectText(el){
   txt = txt.trim();
   if (txt) return txt.slice(0, 80);
   const tag = (el.tagName || "").toLowerCase();
-  const full = (el.textContent || "").trim().replace(/\\s+/g, " ");
-  if (!full || full.length > 80 || full.indexOf("\\n") !== -1) return "";
+  const full = (el.textContent || "").trim().replace(/\s+/g, " ");
+  if (!full || full.length > 80 || full.indexOf("\n") !== -1) return "";
   // 子元素包文案（<a><span>登录</span></a>）或短按钮/链接文案——与 Selenium .text / 文案定位一致
   if (el.children.length === 0 || INTERACTIVE.has(tag)) return full;
   return "";

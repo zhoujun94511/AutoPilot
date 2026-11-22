@@ -327,6 +327,8 @@ def execute_job(
                 log="\n".join(lines) + "\n",
             )
 
+        # Deliver the HTML even if generating its JSON companion fails.
+        cleanup.remove(report_tmp)
         failed = int(counts.get("failed", 0))
         status = JobStatus.SUCCEEDED if failed == 0 else JobStatus.FAILED
         summary = (
@@ -391,8 +393,6 @@ def execute_job(
         except (OSError, ValueError, TypeError, RuntimeError) as ev_err:
             lines.append(f"[runner] WARN evidence.zip: {ev_err}")
         lines.append(f"[runner] done status={status.value} summary={summary}")
-        keep_report = report_tmp
-        cleanup[:] = [entry for entry in cleanup if entry != keep_report]
         return JobResultIn(
             status=status,
             error=None if failed == 0 else f"{failed} 个用例失败",

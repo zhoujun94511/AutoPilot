@@ -191,6 +191,8 @@ class _MirrorView(QGraphicsView):
 class MirrorPanel(QWidget):
     sessionEnded = pyqtSignal()
     videoFirstFrame = pyqtSignal()   # 高帧画面首帧 → 启 WDA（ws-scrcpy 顺序）
+    _controlErrorSig = pyqtSignal(str)
+    _clipboardReadySig = pyqtSignal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -279,6 +281,10 @@ class MirrorPanel(QWidget):
         from ..theme import init_panel_style
 
         self._ui_theme = init_panel_style(self, "mirror_panel")
+        # noinspection PyUnresolvedReferences
+        self._controlErrorSig.connect(self._apply_control_error)
+        # noinspection PyUnresolvedReferences
+        self._clipboardReadySig.connect(self._apply_clipboard_text)
 
     def _sync_idle_label(self, *, stopped: bool = False) -> None:
         """非运行态状态栏：停止后勿残留「实时操作中」。"""
@@ -307,8 +313,8 @@ class MirrorPanel(QWidget):
         self.btn_live.blockSignals(False)
         self._start()
 
-    def stop(self) -> None:
-        self._stop()
+    def stop(self, *, blocking: bool = False) -> None:
+        self._stop(blocking=blocking)
 
     def attach_control(self, control) -> None:
         """控制会话晚于画面就绪时注入（如高帧画面先开播、WDA 后建）。"""
@@ -526,7 +532,7 @@ class MirrorPanel(QWidget):
                 pass
         self._first_frame_timer.start(60000)
 
-    def _stop(self) -> None:
+    def _stop(self, *, blocking: bool = False) -> None:
         if self._stopping:
             return
         self._stopping = True
@@ -537,7 +543,7 @@ class MirrorPanel(QWidget):
         self._source = None
         if src is not None:
             self._disconnect_source(src)
-            # 帧源 stop 可能 wait 数秒：放到后台，避免卡住 GUI
+            # 帧源 stop 可能 wait 数秒：常态放到后台避免卡住 GUI；关窗时等待释放 adb reverse/子进程
             def _bg_stop(s=src) -> None:
                 # noinspection PyBroadException
                 try:
@@ -545,7 +551,10 @@ class MirrorPanel(QWidget):
                 except Exception:
                     pass
 
-            threading.Thread(target=_bg_stop, name="mirror-src-stop", daemon=True).start()
+            stop_th = threading.Thread(target=_bg_stop, name="mirror-src-stop", daemon=True)
+            stop_th.start()
+            if blocking:
+                stop_th.join(timeout=2.5)
         if self._disp is not None:
             self._disp.stop()
             self._disp = None
@@ -679,10 +688,14 @@ class MirrorPanel(QWidget):
         self.lbl.setText(f"实时操作中（{self._stream_tag}·{ctrl}）｜MJPEG 断流，已切截图轮询")
 
     def _on_control_error(self, msg: str) -> None:
-        from PyQt6.QtCore import QTimer
         short = (msg or "").strip().splitlines()[0][:100]
         hint = "会话已断开，请停止镜像后重新开启" if "session" in short.lower() else short
-        QTimer.singleShot(0, lambda: self.lbl.setText(f"控制失败：{hint}"))
+        # 经由 pyqtSignal 自动切回 GUI 线程，避免在 threading.Thread 调 QTimer.singleShot 丢消息
+        # noinspection PyUnresolvedReferences
+        self._controlErrorSig.emit(hint)
+
+    def _apply_control_error(self, hint: str) -> None:
+        self.lbl.setText(f"控制失败：{hint}")
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
@@ -766,12 +779,13 @@ class MirrorPanel(QWidget):
         # iOS 限制：仅 WDA 前台时可读剪贴板，镜像被测 App 时常返回空（非 bug）
         hint = ("（iOS 限制：仅 WDA 前台时可读剪贴板）"
                 if not text and self._platform == "ios" else "")
+        # noinspection PyUnresolvedReferences
+        self._clipboardReadySig.emit(text or "", hint)
 
-        def _apply():
-            self.clip_edit.setText(text or "")
-            if hint:
-                self.clip_edit.setPlaceholderText(hint)
-        QTimer.singleShot(0, _apply)
+    def _apply_clipboard_text(self, text: str, hint: str) -> None:
+        self.clip_edit.setText(text)
+        if hint:
+            self.clip_edit.setPlaceholderText(hint)
 
     def _on_text_input(self, s: str) -> None:
         """输入法提交文本（中文等）→ 注入设备（Android 非 ASCII 走剪贴板粘贴，iOS 走 /wda/keys）。"""

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..theme import apply_dialog_theme
+from ...runtime.paths import validate_portable_name
 
 
 class NewProjectDialog(QDialog):
@@ -100,6 +101,12 @@ class NewProjectDialog(QDialog):
         path = self.target_path()
         if not self.parent_dir() or not self.project_name():
             self.lbl_preview.setText("请填写位置与工程名称")
+            self.btn_ok.setEnabled(False)
+            return
+        try:
+            validate_portable_name(self.project_name())
+        except ValueError as exc:
+            self.lbl_preview.setText(f"工程名称不可用：{exc}")
             self.btn_ok.setEnabled(False)
             return
         exists = os.path.isdir(path)

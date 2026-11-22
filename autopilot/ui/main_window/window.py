@@ -141,7 +141,7 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
         self._build_menu()
         self._build_toolbar()
         self._wire_signals()
-        self._build_statusbar()
+        build_statusbar(self)
         self._sync_ios_backend_controls()
         self._install_editor_context_menus()
         self._default_state = self.saveState()
@@ -805,6 +805,9 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
 
     def closeEvent(self, event) -> None:
         """关窗即还原：停计划、停实时镜像、退检视会话/WDA 准备、停我们起的 Appium，避免端口残留。"""
+        if not self._confirm_close_docs(range(len(self._open_docs))):
+            event.ignore()
+            return
         # 先作废计划定时器，避免关窗过程中 tick 再启 worker
         if hasattr(self, "stop_schedule"):
             self.stop_schedule()
@@ -836,12 +839,13 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
 
         # noinspection PyBroadException
         try:
-            self.mirror.stop()
+            self.mirror.stop(blocking=True)
         except Exception:
             pass
         # 取消后 prepare 循环会较快退出；给足时间再关窗
         for w in (getattr(self.inspector, "_snap_worker", None),
                   getattr(self, "_ios_sess_worker", None),
+                  getattr(self, "_ipa_install_worker", None),
                   getattr(self, "_mgmt_http_worker", None)):
             if w is not None and w.isRunning():
                 w.wait(12_000)
@@ -858,3 +862,9 @@ class MainWindow(QMainWindow, RunMixin, FilesMixin, DeviceMixin, EditMixin, Mgmt
         if getattr(self, "_right_aux", None) is not None:
             settings.set_right_aux_split_state(bytes(self._right_aux.save_state().data()))
         super().closeEvent(event)
+
+
+def build_statusbar(window: MainWindow) -> None:
+    """组装主窗口状态栏。测试可以替换这个函数，避免直接调用受保护方法。"""
+    # noinspection PyProtectedMember
+    window._build_statusbar()

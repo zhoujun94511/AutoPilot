@@ -53,7 +53,7 @@ def test_edit_save_reload() -> bool:
                   and d.get("retry") == "3" and cfg2.comments.get("baseUrl") == "首页"
                   and [k for k, _ in cfg2.entries] == ["baseUrl", "timeout", "retry"])
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("数据配置编辑器: ⏭ 跳过(", e, ")")
         return True
     print("数据配置 编辑→保存→重载:", "✅" if ok else "❌")

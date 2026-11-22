@@ -40,6 +40,7 @@ class LocalRunnerProcess:
         self.runner_id: str = ""
         self.server: str = ""
         self._log_path: Optional[Path] = None
+        self._atexit_registered: bool = False
 
     @property
     def running(self) -> bool:
@@ -103,6 +104,19 @@ class LocalRunnerProcess:
         log_dir = Path(tempfile.gettempdir()) / "autopilot_local_runner"
         log_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = log_dir / f"{rid}.log"
+        # 启动前若单个本地 Runner 日志超过 5MB 则轮转，并清理 14 天前旧日志
+        try:
+            if self._log_path.is_file() and self._log_path.stat().st_size > 5_000_000:
+                bak = self._log_path.with_suffix(".log.1")
+                os.replace(self._log_path, bak)
+            import time as _time
+
+            cutoff = _time.time() - 14 * 86400
+            for old_f in log_dir.glob("*.log*"):
+                if old_f.is_file() and old_f != self._log_path and old_f.stat().st_mtime < cutoff:
+                    old_f.unlink(missing_ok=True)
+        except OSError:
+            pass
         log_f = open(self._log_path, "ab", buffering=0)
         kwargs: dict = {
             "stdout": log_f,
@@ -130,10 +144,15 @@ class LocalRunnerProcess:
                 pass
         self.runner_id = rid
         self.server = url
+        import atexit
+
+        if not getattr(self, "_atexit_registered", False):
+            self._atexit_registered = True
+            atexit.register(self.stop)
         return rid
 
     def stop(self, *, timeout: float = 5.0) -> bool:
-        """停止本机 Runner；未在运行返回 False。"""
+        """停止本机 Runner 及其子进程树；未在运行返回 False。"""
         proc = self._proc
         if proc is None:
             return False
@@ -141,12 +160,33 @@ class LocalRunnerProcess:
             self._proc = None
             return False
         try:
-            proc.terminate()
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2.0)
+            if sys.platform == "win32":
+                proc.terminate()
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    subprocess.run(
+                        ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                    proc.wait(timeout=2.0)
+            else:
+                import signal
+
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except OSError:
+                    proc.terminate()
+                try:
+                    proc.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except OSError:
+                        proc.kill()
+                    proc.wait(timeout=2.0)
         finally:
             self._proc = None
         return True

@@ -42,7 +42,7 @@ def iter_project_files(project_dir: str) -> list[tuple[str, str]]:
                 continue
             rel = os.path.relpath(full, root).replace("\\", "/")
             out.append((full, rel))
-    out.sort(key=lambda x: x[1].lower())
+    out.sort(key=lambda x: x[1])
     return out
 
 

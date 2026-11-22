@@ -124,6 +124,7 @@ def test_parity_run_validate_only() -> bool:
         cwd=root,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=60,
     )
     ok = proc.returncode == 0 and "parity 骨架" in (proc.stdout + proc.stderr)

@@ -1,7 +1,10 @@
-"""工程树组件：浏览工程目录下的用例/配置/安装包/报告/运行日志等工程资源。
+"""工程树组件：只浏览可编辑的工程资源（用例/套件/计划/对象库/关键字/数据配置）。
 
+对标 Katalon Test Explorer、Airtest 脚本列表、Eclipse TestCase Explorer：
+安装包、运行日志、HTML 报告不进这棵树，从设备菜单、控制台或运行结果打开。
 文件按类型过滤；目录在子树内无任何可见文件时不展示（避免「空文件夹」）。
-diag_* 等诊断落盘默认隐藏；logs/ios_monkey 与 .log 运行记录在树中可见。
+apk/ipa/logs/reports 以及 diag_* 诊断落盘默认隐藏。
+config 不整目录隐藏：其下 DataConfig.properties 是数据配置，仍可从树打开。
 
 对外信号：
   fileActivated(str path) —— 双击某个工程文件时发出。
@@ -22,11 +25,15 @@ from ..theme import semantic_color
 from ...runtime import settings
 
 
-# 工程树可见文件类型（用例/配置 + 安装包/报告 + Monkey 报告与运行日志）
+# 工程树可见文件：可编辑资源。不用裸 *.yaml，避免把 api_env 等配置和报告带进来。
+# .tc.yaml 等复合后缀必须单独列出（QDir 的 *.tc 匹配不到 foo.tc.yaml）。
 PROJECT_FILE_FILTERS = [
-    "*.tc", "*.ts", "*.map", "*.properties", "*.ks", "*.yaml", "*.yml",
-    "*.apk", "*.ipa", "*.html",
-    "*.log", "*.json", "*.jsonl", "*.txt",
+    "*.tc", "*.tc.yaml", "*.tc.yml",
+    "*.ts", "*.ts.yaml", "*.ts.yml",
+    "*.tp", "*.tp.yaml", "*.tp.yml",
+    "*.map", "*.map.yaml", "*.map.yml",
+    "*.ks", "*.ks.yaml", "*.ks.yml",
+    "*.properties",
 ]
 # 不展示的目录（缓存/编译/VCS/依赖/IDE 元数据等）
 _IGNORED_DIRS = {
@@ -34,11 +41,37 @@ _IGNORED_DIRS = {
     ".idea", ".vscode", ".pytest_cache", ".mypy_cache", ".ruff_cache",
     "dist", "build", ".eggs", "__MACOSX",
 }
+# 运行产物目录（任意层级）。config 不在此列，以便打开 DataConfig.properties。
+_ARTIFACT_DIRS = {
+    "apk", "ipa", "logs", "log", "reports", "report",
+}
+_HIDDEN_DIR_NAMES = {n.casefold() for n in _IGNORED_DIRS} | _ARTIFACT_DIRS
+
+
+def _norm_path(path: str) -> str:
+    """大小写与分隔符无关的路径比较键。"""
+    return os.path.normcase(os.path.normpath(path))
+
+
+def _model_path(path: str) -> str:
+    """交给 QFileSystemModel 的路径。
+
+    Windows 临时目录常是 ``ADMINI~1`` 这种 8.3 短名，模型回调却是长路径。
+    两边不一致时根节点挂不上，树会从盘符整棵铺开。
+    """
+    if not path:
+        return ""
+    try:
+        return os.path.normpath(os.path.realpath(path))
+    except OSError:
+        return os.path.normpath(path)
 
 
 def _ignored_dir(name: str) -> bool:
     """目录名是否应从工程树排除。"""
-    if not name or name in _IGNORED_DIRS or name.startswith("."):
+    if not name or name.startswith("."):
+        return True
+    if name.casefold() in _HIDDEN_DIR_NAMES:
         return True
     # 诊断脚本落盘（diag_onboarding* 等），非工程编辑资源
     return name.startswith("diag_")
@@ -121,7 +154,7 @@ class _ProjectFilter(QSortFilterProxyModel):
 
     @staticmethod
     def _norm(path: str) -> str:
-        return os.path.normcase(os.path.normpath(path))
+        return _norm_path(path)
 
     def _case_descendants(self, src: QModelIndex) -> list:
         """目录(源索引)下递归收集所有用例(.tc)的真实路径，跳过噪音目录。"""
@@ -184,6 +217,42 @@ class _ProjectFilter(QSortFilterProxyModel):
         if self._checked:
             self._checked.clear()
             self.layoutChanged.emit()      # 简单可靠地刷新全部复选框
+            # noinspection PyUnresolvedReferences
+            self.checkedChanged.emit()
+
+    def rebase_paths(self, old: str, new: str) -> None:
+        """将勾选用例路径随文件/目录重命名迁移。"""
+        old_norm = self._norm(old)
+        prefix = old_norm + os.sep
+        changed = False
+        updated = {}
+        for path in self._checked.values():
+            norm = self._norm(path)
+            if norm == old_norm:
+                rebased = new
+            elif norm.startswith(prefix):
+                rebased = os.path.join(new, os.path.relpath(path, old))
+            else:
+                rebased = path
+            updated[self._norm(rebased)] = rebased
+            changed = changed or rebased != path
+        if changed:
+            self._checked = updated
+            self.layoutChanged.emit()
+            # noinspection PyUnresolvedReferences
+            self.checkedChanged.emit()
+
+    def drop_paths(self, path: str) -> None:
+        """移除被删除文件/目录及其子树的勾选记录。"""
+        norm = self._norm(path)
+        prefix = norm + os.sep
+        kept = {
+            key: value for key, value in self._checked.items()
+            if self._norm(value) != norm and not self._norm(value).startswith(prefix)
+        }
+        if len(kept) != len(self._checked):
+            self._checked = kept
+            self.layoutChanged.emit()
             # noinspection PyUnresolvedReferences
             self.checkedChanged.emit()
 
@@ -352,6 +421,8 @@ class ProjectTree(QTreeView):
         self._proxy = _ProjectFilter(self._fs, self)
         self.setModel(self._proxy)
         self._root: Optional[str] = None
+        self._path_root = ""
+        self._model_root = ""
         for col in (1, 2, 3):  # 隐藏大小/类型/修改时间列
             self.hideColumn(col)
         self.setHeaderHidden(True)
@@ -369,7 +440,7 @@ class ProjectTree(QTreeView):
     def _prefetch_children(self, path: str) -> None:
         if not self._root:
             return
-        rp = os.path.normcase(os.path.normpath(self._root))
+        rp = os.path.normcase(_model_path(self._root))
         np = os.path.normcase(os.path.normpath(path))
         if not (np == rp or np.startswith(rp + os.sep)):
             return                      # 只预取工程子树内，不碰其它
@@ -385,19 +456,50 @@ class ProjectTree(QTreeView):
                     self._fs.fetchMore(ch)   # 触发其 directoryLoaded → 级联加载
 
     def set_root(self, path: str) -> None:
+        previous = self._root
         self._root = path
         valid = bool(path) and os.path.isdir(path)
+        if valid and previous and _norm_path(previous) != _norm_path(path):
+            # 切换到另一个工程时，旧工程的勾选不能带入新工程。
+            self._proxy.clear_checks()
         self._proxy.set_active(valid)
         if valid:
             # 以「工程目录」为根节点：root 设到其父目录，代理只放行工程目录本身
-            parent = os.path.dirname(os.path.normpath(path)) or path
-            self._proxy.set_project(path)
-            self._fs.setRootPath(path)
+            model_path = _model_path(path)
+            self._path_root, self._model_root = path, model_path
+            parent = os.path.dirname(model_path) or model_path
+            self._proxy.set_project(model_path)
+            self._fs.setRootPath(model_path)
             self.setRootIndex(self._proxy.mapFromSource(self._fs.index(parent)))
             self.expandToDepth(0)       # 展开工程根，直接露出其内容
         else:
             # 无工程：不挂任何根，配合代理全拒 → 树彻底空白，只显示「未打开工程」占位
+            self._proxy.set_project("")
+            # 释放 QFileSystemModel 对旧工程目录的监视。Windows 下如果
+            # 仍挂着旧根就直接重命名工程目录，目录改名可能被模型的目录
+            # 监视句柄阻断，或改名后继续回调旧路径。
+            self._fs.setRootPath("")
             self.setRootIndex(QModelIndex())
+            if previous:
+                # 仅 setRootPath("") 在 Windows 下不会立刻释放 QFileSystemWatcher/QFileInfoGatherer
+                # 对旧工程目录的句柄；重建 QFileSystemModel 并销毁旧实例才能彻底解除占用。
+                old_fs = self._fs
+                new_fs = QFileSystemModel(self)
+                new_fs.setNameFilters(PROJECT_FILE_FILTERS)
+                new_fs.setNameFilterDisables(False)
+                # noinspection PyUnresolvedReferences
+                new_fs.directoryLoaded.connect(self._prefetch_children)
+                self._fs = new_fs
+                self._proxy._fs = new_fs
+                self._proxy.setSourceModel(new_fs)
+                try:
+                    # noinspection PyUnresolvedReferences
+                    old_fs.directoryLoaded.disconnect(self._prefetch_children)
+                except (TypeError, RuntimeError):
+                    pass
+                old_fs.setParent(None)
+                old_fs.deleteLater()
+            self._proxy.invalidateFilter()
         self.viewport().update()        # 触发空态提示重绘
 
     def paintEvent(self, e) -> None:
@@ -415,11 +517,34 @@ class ProjectTree(QTreeView):
         p.drawText(r, int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap), text)
         p.end()
 
+    def _logical_path(self, path: str) -> str:
+        """Keep public paths in the spelling used to open this project."""
+        if not self._path_root or not self._model_root:
+            return path
+        normalized = _norm_path(path)
+        model_root = _norm_path(self._model_root)
+        if normalized == model_root:
+            return self._path_root
+        if normalized.startswith(model_root + os.sep):
+            return os.path.join(self._path_root, os.path.relpath(path, self._model_root))
+        return path
+
+    def _internal_path(self, path: str) -> str:
+        # Retain this mapping while set_root("") detaches the filesystem model
+        # for a root rename; the old path may already have disappeared.
+        logical_root = _norm_path(self._path_root) if self._path_root else ""
+        normalized = _norm_path(path)
+        if logical_root and normalized == logical_root:
+            return self._model_root
+        if logical_root and normalized.startswith(logical_root + os.sep):
+            return os.path.join(self._model_root, os.path.relpath(path, self._path_root))
+        return _model_path(path)
+
     def selected_path(self) -> Optional[str]:
         """当前选中项的绝对路径；无选中返回根目录。"""
         idx = self.currentIndex()
         if idx.isValid():
-            return self._fs.filePath(self._proxy.mapToSource(idx))
+            return self._logical_path(self._fs.filePath(self._proxy.mapToSource(idx)))
         return getattr(self, "_root", None)
 
     def selected_dir(self) -> Optional[str]:
@@ -434,16 +559,16 @@ class ProjectTree(QTreeView):
         path = self._fs.filePath(src)
         if not self._fs.isDir(src):
             # noinspection PyUnresolvedReferences
-            self.fileActivated.emit(path)
+            self.fileActivated.emit(self._logical_path(path))
 
     def refresh(self) -> None:
-        """强制重扫工程目录（外部新增 Monkey 报告、.log 等时有效）。
+        """强制重扫工程目录（外部新增用例等文件时有效）。
 
         旧实现仅重复 set_root(同路径)，Qt 不会重读磁盘，等于空操作。
         """
         if not self._root or not os.path.isdir(self._root):
             return
-        root = os.path.normpath(self._root)
+        root = _model_path(self._root)
         parent = os.path.dirname(root) or root
 
         expanded: set[str] = set()
@@ -498,10 +623,18 @@ class ProjectTree(QTreeView):
 
     def checked_paths(self) -> list:
         """已勾选用例(.tc)的真实路径列表（供「批量运行」）。"""
-        return self._proxy.checked_paths()
+        return sorted(self._logical_path(path) for path in self._proxy.checked_paths())
 
     def clear_checks(self) -> None:
         self._proxy.clear_checks()
+
+    def rebase_paths(self, old: str, new: str) -> None:
+        self._proxy.rebase_paths(old, new)
+        self._proxy.rebase_paths(self._internal_path(old), self._internal_path(new))
+
+    def drop_paths(self, path: str) -> None:
+        self._proxy.drop_paths(path)
+        self._proxy.drop_paths(self._internal_path(path))
 
     def check_all_cases(self) -> int:
         return self._proxy.check_all_cases()
@@ -523,7 +656,7 @@ class ProjectTree(QTreeView):
             if not proj.isValid():
                 continue
             self.expand(proj)      # 工程根行保持在树中
-            self.collapse(proj)    # 其下 apk/logs/… 全部收起
+            self.collapse(proj)    # 其下子目录全部收起
 
     def set_name_filter(self, text: str) -> None:
         """按名称过滤工程树；有过滤词时展开以露出命中项。"""

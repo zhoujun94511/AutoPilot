@@ -118,7 +118,7 @@ class AuthoringMixin(_Base):
             from ...authoring.gate import GateResult, record_gate_result
         except ImportError:
             return
-        if self._suite_failed_count(suite):
+        if getattr(suite, "status", "") == "cancelled" or self._suite_failed_count(suite):
             if hasattr(self, "console") and self.console is not None:
                 self.console.log(
                     f"[authoring] 试跑未通过，仍禁止直接上传：{pending}",

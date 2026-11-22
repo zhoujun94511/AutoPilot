@@ -23,6 +23,12 @@ from autopilot.mgmt.client import MgmtClientError
 
 @pytest.fixture()
 def mc_settings(monkeypatch, tmp_path):
+    # Exercise encrypted-file storage without touching the host OS keyring.
+    monkeypatch.setenv("AUTOPILOT_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setattr("autopilot.runtime.settings._mc_keyring_get", lambda _user: None)
+    monkeypatch.setattr("autopilot.runtime.settings._mc_keyring_store", lambda _user, _pwd: False)
+    monkeypatch.setattr("autopilot.runtime.settings._secret_keyring_get", lambda _kind: None)
+    monkeypatch.setattr("autopilot.runtime.settings._secret_keyring_store", lambda _kind, _value: False)
     store: dict[str, object] = {
         "mc_server_url": "http://127.0.0.1:8000",
         "mc_username": "alice",
@@ -68,7 +74,8 @@ def test_persist_token_pair(mc_settings):
     assert settings.mc_refresh() == "ref1"
     assert settings.mc_user_id() == "u1"
     assert "mc_refresh" not in mc_settings
-    assert str(mc_settings.get("mc_refresh_enc") or "").startswith("v1:")
+    prefix = "v2dpapi:" if sys.platform == "win32" else "v1:"
+    assert str(mc_settings.get("mc_refresh_enc") or "").startswith(prefix)
     assert "ref1" not in str(mc_settings.get("mc_refresh_enc"))
 
 

@@ -119,7 +119,7 @@ def maybe_llm_goal_judge(
         f"目标动作已确认：{'是' if target_confirmed else '否'}\n"
         f"用户目标：\n{mask_text((natural_language or '').strip(), secret_map)}\n\n"
         f"已成功步骤：\n{steps}\n\n"
-        f"编写警告：\n{(warnings or [])[-8:]}\n"
+        f"编写警告：\n{[mask_text(str(w), secret_map) for w in (warnings or [])[-8:]]}\n"
     )
     try:
         data = complete_json(prompt, chat=chat, purpose="planning")

@@ -10,6 +10,7 @@ import copy
 import datetime
 import os
 import shutil
+from dataclasses import dataclass
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QMessageBox
@@ -44,6 +45,23 @@ if TYPE_CHECKING:
     _Base = MainWindow
 else:
     _Base = object
+
+
+def _platform_run_context() -> tuple[str, str, str, str]:
+    return (
+        settings.mc_server_url(), settings.mc_org_id(), settings.mc_project_id(),
+        settings.mc_user_id() or settings.mc_username(),
+    )
+
+
+@dataclass(frozen=True)
+class _RunReportContext:
+    project_dir: str
+    platform_context: tuple[str, str, str, str]
+    started_at: datetime.datetime
+    fault_strategy: str
+    case_paths: tuple[str, ...]
+    base_vars: dict
 
 
 class RunMixin(_Base):
@@ -489,6 +507,9 @@ class RunMixin(_Base):
     def _start_worker(self, cases, name, maps, report: bool, keyword_store=None, *,
                       allow_parallel: bool = True, unattended: bool = False,
                       fault_times: int = 0) -> bool:
+        if self._worker is not None:
+            self.console.log("已有执行尚未完成", "运行", "WARNING")
+            return False
         # 先解析并行：若走多机，跳过「单机选设备」弹窗（设备列表由并行对话框决定）
         run_mode, platform, workers, udids = "sequential", "", 0, None
         fault_isolation = True
@@ -518,9 +539,18 @@ class RunMixin(_Base):
         self._run_step_count = 0
         self._run_paused = False
         self._set_pause_indicator(False)
-        self._report_on_finish = report
-        self._run_started_at = datetime.datetime.now()
-        self._run_case_paths = [getattr(c, "source_path", "") or "" for c in cases]
+        project_dir = str(base_vars.get("__project_path__") or "")
+        self._run_report_context = _RunReportContext(
+            project_dir=os.path.abspath(project_dir),
+            platform_context=_platform_run_context(),
+            started_at=datetime.datetime.now(),
+            fault_strategy=self._fault_strategy.value,
+            case_paths=tuple(c.source_path for c in cases if c.source_path),
+            base_vars={key: copy.deepcopy(base_vars[key]) for key in (
+                "__device_udid_by_platform__", "__parallel_device_udids__", "__parallel_platform__",
+                "__device_udid__", "__case_platforms__", "__default_platform__",
+            ) if key in base_vars},
+        ) if report and project_dir else None
         self._run_case_total = len(cases)
         self._run_case_done = 0
         # 计划拍归属：仅本 worker 的 suiteDone 才推进计划计数（避免手动跑干扰计划）
@@ -787,13 +817,17 @@ class RunMixin(_Base):
             total = getattr(self, "_run_case_total", 0)
             if bar is not None and total > 1:
                 bar.setValue(min(self._run_case_done, total))
-        self.console.log(f"{rr.case_name}：{rr.counts()}", "结果")
+        label = "（已取消）" if rr.is_cancelled else ""
+        self.console.log(f"{rr.case_name}{label}：{rr.counts()}", "结果")
 
     def _on_suite_done(self, suite) -> None:
         cc = suite.case_counts()
-        level = "ERROR" if cc["failed"] else "INFO"
+        cancelled = suite.status == "cancelled"
+        label = "执行已取消" if cancelled else "执行完成"
+        level = "WARNING" if cancelled else "ERROR" if cc["failed"] else "INFO"
         self.console.log(
-            f"执行完成：用例 {cc['total']}，通过 {cc['passed']}，未通过 {cc['failed']}，"
+            f"{label}：用例 {cc['total']}，通过 {cc['passed']}，未通过 {cc['failed']}，"
+            f"已取消 {cc['cancelled']}，"
             f"通过率 {suite.pass_rate():.1f}%", "结果", level)
         if hasattr(self, "_authoring_record_verify_after_run"):
             self._authoring_record_verify_after_run(suite)
@@ -801,18 +835,22 @@ class RunMixin(_Base):
         by_dev: dict[str, list[int]] = {}
         for rr in getattr(suite, "results", None) or []:
             udid = (getattr(rr, "device_udid", "") or "").strip() or "(未标设备)"
-            pair = by_dev.setdefault(udid, [0, 0])  # passed, failed
-            if getattr(rr, "passed", False):
+            pair = by_dev.setdefault(udid, [0, 0, 0])  # passed, failed, cancelled
+            if rr.is_cancelled:
+                pair[2] += 1
+            elif rr.passed:
                 pair[0] += 1
             else:
                 pair[1] += 1
         if len(by_dev) >= 2:
             parts = [
-                f"{u} 通过 {p}/失败 {f}"
-                for u, (p, f) in sorted(by_dev.items())
+                f"{u} 通过 {p}/失败 {f}/取消 {c}"
+                for u, (p, f, c) in sorted(by_dev.items())
             ]
             self.console.log("按设备：" + "；".join(parts), "结果", level)
-        if self._report_on_finish and self.project_dir:
+        report_context = getattr(self, "_run_report_context", None)
+        self._run_report_context = None
+        if report_context is not None:
             # 延迟：仅出报告时加载 HTML/result.json 写入
             from ...report import (
                 ReportMeta,
@@ -824,8 +862,8 @@ class RunMixin(_Base):
             )
             finished = datetime.datetime.now()
             ts = finished.strftime("%Y-%m-%d %H:%M:%S")
-            started = getattr(self, "_run_started_at", None)
-            base_vars = getattr(self._worker, "_base_vars", None) or {}
+            project_dir = report_context.project_dir
+            base_vars = report_context.base_vars
             by_platform = base_vars.get("__device_udid_by_platform__")
             devices = {}
             parallel_udids = base_vars.get("__parallel_device_udids__")
@@ -848,45 +886,50 @@ class RunMixin(_Base):
                 ) if str(p).lower() in ("android", "ios", "web", "http")
             })
             meta = ReportMeta(
-                project_dir=self.project_dir,
+                project_dir=project_dir,
                 suite_name=suite.name,
                 generated_at=ts,
-                started_at=started.strftime("%Y-%m-%d %H:%M:%S") if started else "",
-                fault_strategy=getattr(self._fault_strategy, "value", str(self._fault_strategy)),
+                started_at=report_context.started_at.strftime("%Y-%m-%d %H:%M:%S"),
+                fault_strategy=report_context.fault_strategy,
                 platforms=platforms,
                 devices=devices,
-                case_paths=[p for p in getattr(self, "_run_case_paths", []) if p],
+                case_paths=list(report_context.case_paths),
             )
-            out = default_report_path(self.project_dir, finished)
-            write_report(suite, out, generated_at=ts, meta=meta)
-            self.console.log(f"报告已生成：{out}", "报告")
-            self.console.log(f"最近报告：{os.path.join(self.project_dir, 'autopilot_report_latest.html')}", "报告")
+            out = ""
             try:
-                cc = suite.case_counts()
+                html_path = default_report_path(project_dir, finished)
+                write_report(suite, html_path, generated_at=ts, meta=meta)
+                out = html_path
+                self.console.log(f"报告已生成：{out}", "报告")
+                self.console.log(f"最近报告：{os.path.join(project_dir, 'autopilot_report_latest.html')}", "报告")
+            except (OSError, ValueError) as report_err:
+                self.console.log(f"HTML 报告写入失败：{report_err}", "报告", "ERROR")
+            try:
                 failed_n = int(cc.get("failed", 0))
                 job_id = f"local-{finished.strftime('%Y%m%d%H%M%S')}"
-                result_path = default_result_json_path(self.project_dir, out)
+                result_path = default_result_json_path(project_dir, out)
                 # 另存一份固定名，便于外部工具抓取最近一次
-                latest_result = os.path.join(self.project_dir, "reports", "result_latest.json")
+                latest_result = os.path.join(project_dir, "reports", "result_latest.json")
                 platforms = meta.platforms or []
                 write_result_json(
                     result_path,
                     job_id=job_id,
-                    status="succeeded" if failed_n == 0 else "failed",
+                    status=suite.status,
                     suite_name=suite.name or "local",
                     passed=int(cc.get("passed", 0)),
                     failed=failed_n,
+                    cancelled=cc["cancelled"],
                     total=int(cc.get("total", 0)),
                     duration_ms=int(getattr(suite, "duration_ms", 0) or 0),
                     summary=(
                         f"{suite.name}: {cc.get('passed', 0)}/{cc.get('total', 0)} passed, "
                         f"{getattr(suite, 'duration_ms', 0)}ms"
                     ),
-                    project_id=settings.mc_project_id() or "",
+                    project_id=report_context.platform_context[2],
                     platform=",".join(platforms) if platforms else "",
                     device_udids=[str(v) for v in (meta.devices or {}).values() if v],
-                    html_report_path=os.path.abspath(out),
-                    cases=cases_from_suite(suite, project_dir=self.project_dir),
+                    html_report_path=os.path.abspath(out) if out else "",
+                    cases=cases_from_suite(suite, project_dir=project_dir),
                 )
                 if os.path.abspath(result_path) != os.path.abspath(latest_result):
 
@@ -899,10 +942,12 @@ class RunMixin(_Base):
             try:
                 from ...mgmt.run_status_sync import try_sync_run_statuses_with_session  # 延迟：仅管理台回写
 
-                try_sync_run_statuses_with_session(
-                    suite,
-                    log=lambda m: self.console.log(m, "管理台"),
-                )
+                if _platform_run_context() == report_context.platform_context:
+                    try_sync_run_statuses_with_session(
+                        suite, project_dir=project_dir, log=lambda m: self.console.log(m, "管理台"),
+                    )
+                else:
+                    self.console.log("管理台上下文已切换，已保留原工程报告", "管理台", "WARNING")
             except Exception as sync_err:  # noqa: BLE001
                 self.console.log(f"状态回写跳过：{sync_err}", "管理台", "WARNING")
         self.act_stop.setEnabled(False)
@@ -918,7 +963,7 @@ class RunMixin(_Base):
         elif bar is not None:
             bar.setVisible(False)
         self._set_pause_indicator(False)
-        self.statusBar().showMessage(f"执行结束  通过率 {suite.pass_rate():.1f}%")
+        self.statusBar().showMessage(f"{label}  通过率 {suite.pass_rate():.1f}%")
         self._parallel_running = False
         self._worker = None
         # 计划执行：仅「计划拍启动的 worker」才推进计数（手动跑不干扰计划）
@@ -926,7 +971,7 @@ class RunMixin(_Base):
         self._schedule_owned_run = False
         if owned and self._schedule is not None:
             self._schedule_runs += 1
-            self._schedule_last_passed = (cc["failed"] == 0)
+            self._schedule_last_passed = suite.status == "succeeded"
             if should_continue(self._schedule, self._schedule_runs, self._schedule_last_passed):
                 gen = getattr(self, "_schedule_gen", 0)
                 QTimer.singleShot(interval_ms(self._schedule),

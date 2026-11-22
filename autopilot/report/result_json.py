@@ -21,6 +21,7 @@ def write_result_json(
     failed: int,
     total: int,
     duration_ms: int,
+    cancelled: int = 0,
     summary: str = "",
     artifact_id: str = "",
     app_build_id: str = "",
@@ -33,7 +34,17 @@ def write_result_json(
     cases: list[dict[str, Any]] | None = None,
     runtime_version: str = "",
 ) -> str:
-    payload = {
+    suite_data: dict[str, Any] = {
+        "name": suite_name,
+        "passed": int(passed),
+        "failed": int(failed),
+        "total": int(total),
+        "duration_ms": int(duration_ms),
+        "summary": summary,
+    }
+    if cancelled:
+        suite_data["cancelled"] = int(cancelled)
+    payload: dict[str, Any] = {
         "schema_version": "1.0",
         "job_id": job_id,
         "execution_id": job_id,
@@ -49,19 +60,12 @@ def write_result_json(
             "device_udids": list(device_udids or []),
             "runner_id": runner_id or None,
         },
-        "suite": {
-            "name": suite_name,
-            "passed": int(passed),
-            "failed": int(failed),
-            "total": int(total),
-            "duration_ms": int(duration_ms),
-            "summary": summary,
-        },
+        "suite": suite_data,
         "cases": list(cases or []),
         "attachments": _attachments_from_cases(cases or []),
         "html_report_path": html_report_path or None,
     }
-    clean = {k: v for k, v in payload.items() if v is not None}
+    clean: dict[str, Any] = {k: v for k, v in payload.items() if v is not None}
     clean["environment"] = {
         k: v for k, v in payload["environment"].items() if v not in (None, [])
     }
@@ -228,9 +232,11 @@ def _case_relative_path(src: str, root: str) -> str:
 
 def _case_item_from_result(rr: Any, *, root: str) -> dict[str, Any]:
     """单条 CaseResult → result.v1 case 对象。"""
+    cancelled = bool(getattr(rr, "is_cancelled", getattr(rr, "cancelled", False)))
+    status = "passed" if bool(getattr(rr, "passed", False)) else "failed"
     item: dict[str, Any] = {
         "name": str(getattr(rr, "case_name", "") or ""),
-        "status": "passed" if bool(getattr(rr, "passed", False)) else "failed",
+        "status": "cancelled" if cancelled else status,
         "duration_ms": int(getattr(rr, "duration_ms", 0) or 0),
     }
     src = str(getattr(rr, "source_path", "") or "").strip()
@@ -306,7 +312,7 @@ def _case_item_from_result(rr: Any, *, root: str) -> dict[str, Any]:
             row["error_message"] = msg[:500]
             if "error_message" not in item:
                 item["error_message"] = msg[:500]
-        if iid or hit or getattr(sr, "status", "") == "FAIL" or http_url or http_status:
+        if iid or hit or row["status"] in ("FAIL", "CANCEL") or http_url or http_status:
             step_rows.append(row)
             row_indices.append(idx)
     if step_rows:
@@ -315,7 +321,7 @@ def _case_item_from_result(rr: Any, *, root: str) -> dict[str, Any]:
     # 把本地状态决策的证据写进 result.json，供 Platform 使用同一规则回写。
     # Platform 不可访问 Runner 工程文件，不能在服务端重新猜 Binding/mapping。
     logical_case_id = str(item.get("logical_case_id") or "").strip()
-    if src and logical_case_id:
+    if src and logical_case_id and not cancelled:
         # 延迟：写证据才读 Binding/mapping；勿让 result.json 急切拉 mgmt 包
         from ..mgmt.binding_coverage import status_for_passed_case
         from ..mgmt.case_trace import has_mapping_required

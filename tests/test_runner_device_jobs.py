@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock
+
+import pytest
 
 from autopilot.runner.agent import RunnerAgent
 from autopilot.runner.contract import JobOut, JobStatus
@@ -129,3 +132,29 @@ def test_run_once_claims_with_wait_zero_when_device_job_active(monkeypatch):
     assert agent.run_once(client) is True
     client.claim.assert_called_once()
     assert client.claim.call_args.kwargs["wait_sec"] == 0
+
+
+@pytest.mark.parametrize(
+    "local_claim,remote_claim,remote_runner,status,stops",
+    [
+        ("claim-1", "claim-1", "r1", JobStatus.RUNNING, False),
+        ("claim-1", "claim-2", "r1", JobStatus.RUNNING, True),
+        ("claim-1", "claim-1", "r2", JobStatus.CLAIMED, True),
+        ("claim-1", "", None, JobStatus.PENDING, True),
+        ("", "", None, JobStatus.PENDING, False),
+        ("", "", "r1", JobStatus.CANCELLED, True),
+    ],
+)
+def test_cancel_poll_stops_when_platform_confirms_claim_loss(
+    local_claim, remote_claim, remote_runner, status, stops
+):
+    agent = RunnerAgent("http://127.0.0.1:9", runner_id="r1")
+    cancel = threading.Event()
+    agent._cancel["job"] = cancel
+    agent._claim_generations["job"] = local_claim
+    client = MagicMock()
+    client.get_job.return_value = JobOut(
+        id="job", name="job", status=status, runner_id=remote_runner, claimed_at=remote_claim
+    )
+    agent._poll_cancel(client)
+    assert cancel.is_set() is stops

@@ -50,7 +50,7 @@ def test_android_parity_run_validate() -> bool:
     script = os.path.join(root, "tools", "android_parity_run.py")
     proc = subprocess.run(
         [sys.executable, script, "--validate-only"],
-        cwd=root, capture_output=True, text=True, timeout=30,
+        cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=30,
     )
     ok = proc.returncode == 0 and "android parity 骨架" in (proc.stdout + proc.stderr)
     print("android_parity_run --validate-only:", "OK" if ok else f"FAIL rc={proc.returncode}")

@@ -71,6 +71,30 @@ def _formatter() -> logging.Formatter:
     return logging.Formatter(LOG_LINE_FORMAT, LOG_TIME_FORMAT)
 
 
+def _prune_old_logs(directory: str, *, keep_days: int = 14) -> None:
+    """清理超过保留天数的旧日志文件（autopilot_*.log* / run_*.log）。"""
+    import time
+
+    if keep_days <= 0:
+        return
+    cutoff = time.time() - keep_days * 86400
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return
+    for name in names:
+        if not (name.startswith("autopilot_") or name.startswith("run_")):
+            continue
+        p = os.path.join(directory, name)
+        if not os.path.isfile(p):
+            continue
+        try:
+            if os.path.getmtime(p) < cutoff:
+                os.unlink(p)
+        except OSError:
+            pass
+
+
 def setup_logging(level: int = logging.INFO, directory: Optional[str] = None,
                   console: bool = True) -> str:
     """幂等装配根 logger。返回当日日志文件路径（落盘失败返回 ''）。"""
@@ -84,6 +108,7 @@ def setup_logging(level: int = logging.INFO, directory: Optional[str] = None,
     # noinspection PyBroadException
     try:
         os.makedirs(directory, exist_ok=True)
+        _prune_old_logs(directory, keep_days=14)
         _LOGFILE = os.path.join(directory, f"autopilot_{datetime.now():%Y%m%d}.log")
         fh = RotatingFileHandler(_LOGFILE, maxBytes=5_000_000, backupCount=7,
                                  encoding="utf-8")

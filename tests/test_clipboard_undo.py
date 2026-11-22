@@ -41,7 +41,7 @@ def test_copy_paste() -> bool:
             ed.paste()                                       # 2 步
             ok = len(_steps(ed)) == 2 and all(s.keyword_id == "log" for s in _steps(ed))
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("复制粘贴: ⏭ 跳过(", e, ")")
         return True
     print("复制/粘贴:", "✅" if ok else "❌")
@@ -63,7 +63,7 @@ def test_cut() -> bool:
             ids = [s.keyword_id for s in _steps(ed)]
             ok = after_cut == ["set_var"] and "log" in ids and len(ids) == 2
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("剪切: ⏭ 跳过(", e, ")")
         return True
     print("剪切+粘贴:", "✅" if ok else "❌")
@@ -87,7 +87,7 @@ def test_undo_redo() -> bool:
             nr = len(_steps(ed))
             ok = n2 == 2 and n1 == 1 and n0 == 0 and nr == 1
             win.close()
-    except Exception as e:  # noqa: BLE001
+    except ImportError as e:
         print("撤销重做: ⏭ 跳过(", e, ")")
         return True
     print("撤销/重做:", "✅" if ok else "❌", f"(2→{n2} undo→{n1}→{n0} redo→{nr})" if ok else "")
